@@ -18,25 +18,33 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger('twitforget')
 
-# FIXME: Tweetcache is entirely in memory, which could become a problem
-# if someone has a lot of tweets. We only cache part of the whole, though,
-# and don't keep any media like images.
-
 class NoMoreTweets(Exception):
     """
     Raised if there are no more tweets to fetch.
     """
 
+def sort_tweets(tweetcache):
+    """
+    Sorts a sorted list of tweets, ordered by 'created_at'
+    """
+    # Sort tweets by created_at
+    # FIXME: Timezones. Le sigh.
+    return sorted(tweetcache.values(), key=lambda x: datetime.datetime.strptime(x['created_at'], '%a %b %d %H:%M:%S +0000 %Y'))    
+
 def save_tweetcache(args, tweetcache):
     """
     Save fetched tweets into the tweetcache.
     """
+    if args.no_tweetcache:
+        log.debug("tweetcache disabled. Not saving tweets.")
+        return
+    
     fieldnames = ('id', 'screen_name', 'created_at', 'content_text')
     
     with open(os.path.expanduser(args.tweetcache), 'w') as ofd:
         csv_writer = csv.DictWriter(ofd, fieldnames)
         csv_writer.writeheader()
-        tweetset = sorted(tweetcache.values(), key=lambda x: datetime.datetime.strptime(x['created_at'], '%a %b %d %H:%M:%S +0000 %Y'))
+        tweetset = sort_tweets(tweetcache)
         for item in tweetset:
             #log.debug("Writing row: %s", item)
             csv_writer.writerow(item)
@@ -51,6 +59,11 @@ def load_tweetcache(args):
     Passes an empty dictionary if the cache doesn't exist.
     """
     tweetcache = {}
+
+    if args.no_tweetcache:
+        log.debug("tweetcache disabled.")
+        return tweetcache
+        
     try:
         fd = open(os.path.expanduser(args.tweetcache), 'r')
         csv_reader = csv.DictReader(fd)
@@ -121,18 +134,35 @@ def update_user_cache(tw, username, args, tweetcache):
     if tweetcache == {}:
         log.debug("Fetching first set of %d tweets...", args.batchsize)
         tweets = tw.statuses.user_timeline(screen_name=username,
-                                           count=args.batchsize)
+                                           count=args.batchsize,
+                                           exclude_replies=True,
+                                       )
     else:
-        max_id = min(tweetcache.keys())
+        max_id = min(tweetcache.keys()) - 1
         log.debug("Fetching %d tweets before tweet id: %s ...", args.batchsize, max_id)
         tweets = tw.statuses.user_timeline(screen_name=username,
                                            max_id=max_id,
-                                           count=args.batchsize)
+                                           count=args.batchsize,
+                                           exclude_replies=True,
+        )
 
     if tweets == []:
-        raise NoMoreTweets("No tweets returned from Twitter. Full history obtained?")
+        raise NoMoreTweets("No tweets returned from Twitter.")
 
-    #log.debug("Tweet info structure: %s", tweets[0].keys())
+    log.debug("Fetched %d tweets.", len(tweets))
+
+    if 2 == 1:
+        twt = tw.statuses.show(id=tweets[0]['id'])
+        log.debug("Only this tweet returned: %s: %s", twt['id'], twt['text'])
+        log.debug("   trying to fetch older again...")
+
+        newmax = sort_tweets(tweetcache)[5]['id']
+        log.debug("Trying 5th oldest tweet id: %s", newmax)
+
+        tweets = tw.statuses.user_timeline(screen_name=username,
+                                           max_id=newmax)
+        log.debug("  got %s", len(tweets))
+    
     for twt in tweets:
         tweetcache[twt['id']] = { 'id': twt['id'],
                                   'screen_name': username,
@@ -149,9 +179,7 @@ def update_user_cache(tw, username, args, tweetcache):
 
 def destroy_tweets(tw, args, tweetcache):
     
-    # Sort tweets by created_at
-    # FIXME: Timezones. Le sigh.
-    tweetset = sorted(tweetcache.values(), key=lambda x: datetime.datetime.strptime(x['created_at'], '%a %b %d %H:%M:%S +0000 %Y'))
+    tweetset = sort_tweets(tweetcache)
 
     # Delete tweets older than the number we're going to keep
     #log.debug("First 5 tweets: %s", tweetset[:5])
@@ -159,7 +187,7 @@ def destroy_tweets(tw, args, tweetcache):
 
     log.debug("Need to destroy %d tweets.", len(destroy_tweetset))
     for idx, twt in enumerate(destroy_tweetset):
-        log.debug("Destroying tweet id %s [%s]: %s", twt['id'], twt['created_at'], twt['content_text'])
+        log.debug("Destroying tweet id %s [%s]: %s", twt['id'], twt['created_at'], unicode(twt['content_text'], 'utf-8'))
         try:
             if not args.dryrun:
                 gone_twt = tw.statuses.destroy(id=twt['id'])
@@ -175,7 +203,7 @@ def destroy_tweets(tw, args, tweetcache):
                     del tweetcache[twt['id']]
                 except KeyError:
                     log.debug("tweetcache ids: %s", tweetcache.keys())
-                    pass
+                    raise
             else:
                 raise
         
@@ -215,11 +243,13 @@ if __name__ == '__main__':
     ap.add_argument('userids', nargs='+', help="User id")
     
     ap.add_argument('-c', '--config', default='~/.twitrc', help="Config file")
-    ap.add_argument('-b', '--batchsize', type=int, default=180, help="Fetch this many tweets per API call (max is Twitter API max, currently 200)")
-    ap.add_argument('-k', '--keep', type=int, default="2000", help="How many tweets to keep.")
-    ap.add_argument('-s', '--sleeptime', type=int, default=170/15, help="File to store cache of tweet/date IDs.")    
+    ap.add_argument('-b', '--batchsize', type=int, default=200, help="Fetch this many tweets per API call (max is Twitter API max, currently 200)")
+    ap.add_argument('-k', '--keep', type=int, default=2000, help="How many tweets to keep.")
+    ap.add_argument('-s', '--sleeptime', type=int, default=170/15, help="Time to sleep between API accesses.")    
 
     ap.add_argument('--tweetcache', default='~/.tweetcache', help="File to store cache of tweet/date IDs")
+    ap.add_argument('--no-tweetcache', action='store_true', default=True, help="Disable tweetcache.")
+
     ap.add_argument('--dryrun', action='store_true', help="Don't actually delete tweets, but do populate cache.")
     
     args = ap.parse_args()
