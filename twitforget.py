@@ -135,7 +135,7 @@ def update_user_cache(tw, username, args, tweetcache):
         log.debug("Fetching first set of %d tweets...", args.batchsize)
         tweets = tw.statuses.user_timeline(screen_name=username,
                                            count=args.batchsize,
-                                           exclude_replies=True,
+                                           #exclude_replies=True,
                                        )
     else:
         max_id = min(tweetcache.keys()) - 1
@@ -143,7 +143,7 @@ def update_user_cache(tw, username, args, tweetcache):
         tweets = tw.statuses.user_timeline(screen_name=username,
                                            max_id=max_id,
                                            count=args.batchsize,
-                                           exclude_replies=True,
+                                           #exclude_replies=True,
         )
 
     if tweets == []:
