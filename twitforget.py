@@ -15,7 +15,7 @@ import twitter
 import time
 
 import logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARN)
 log = logging.getLogger('twitforget')
 
 class NoMoreTweets(Exception):
@@ -198,7 +198,7 @@ def destroy_tweets(tw, args, tweetcache):
             log.debug("Response: %s", e.response_data)
             errors = e.response_data['errors']
             if len(errors) == 1 and errors[0]['code'] == 144:
-                log.info("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
+                log.warn("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
                 try:
                     del tweetcache[twt['id']]
                 except KeyError:
@@ -251,8 +251,13 @@ if __name__ == '__main__':
     ap.add_argument('--no-tweetcache', action='store_true', default=True, help="Disable tweetcache.")
 
     ap.add_argument('--dryrun', action='store_true', help="Don't actually delete tweets, but do populate cache.")
+    ap.add_argument('--loglevel', choices=['debug', 'info', 'warning', 'error', 'critical'], help="Set log output level.")
     
     args = ap.parse_args()
+
+    if args.loglevel is not None:
+        levelname = args.loglevel.upper()
+        log.setLevel(getattr(logging, levelname))
 
     tw = authenticate(args)
     tweetcache = load_tweetcache(args)
