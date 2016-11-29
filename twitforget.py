@@ -17,7 +17,7 @@ import time
 import sqlite3
 
 import logging
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('twitforget')
 
@@ -85,6 +85,13 @@ class TweetCache(object):
         log.debug("minimum id is: %d", res)
         return res
 
+    def get_max_id(self):
+        c = self.conn.cursor()
+        c.execute("SELECT max(id) FROM tweets")
+        res = c.fetchone()[0]
+        log.debug("max id is: %d", res)
+        return res
+    
     def get_destroy_set(self, keepnum, deletenum=None):
         """
         Return a list of tweets to destroy.
@@ -157,22 +164,85 @@ def fetch_all_tweets(tw, args, tweetcache):
     """
     username = args.userids[0]
 
-    # Get a list of tweets for the user no older than the
-    # specified time ago.
-    #first_search = tw.search.tweets(q='@%s' % username, until='2014-01-01')
-    #log.debug("search tweets: %s", first_search)
+    # Get older tweets
+    tweetcache = get_old_tweets(tw, username, args, tweetcache)
+    
+    # Get newer tweets
+    tweetcache = get_new_tweets(tw, username, args, tweetcache)
 
-    while(1):
-        try:
-            tweetcache = update_user_cache(tw, username, args, tweetcache)
+    return tweetcache
 
-            sleeptime = 60 / args.searchlimit
-            log.debug("sleeping for %s seconds...", sleeptime)
-            time.sleep(sleeptime)
+def get_new_tweets(tw, username, args, tweetcache):
+    """
+    Get tweets that are newer than what's in the cache.
+    """
+    fetching = True
+    while(fetching):
+        # Get latest tweet id
+        known_max_id = tweetcache.get_max_id()
+        tweets = tw.statuses.user_timeline(screen_name=username,
+                                           count=args.batchsize,
+                                           since_id=known_max_id,
+                                           #exclude_replies=True,
+                                       )
+        log.debug("Fetched %d tweets.", len(tweets))
+        if tweets == []:
+            log.debug("No more recent tweets to fetch.")
+            # Stop fetching
+            fetching = False
+            break
+        else:
+            tweetcache.save_tweets(username, tweets)
+
+        sleeptime = 60 / args.searchlimit
+        log.debug("sleeping for %s seconds...", sleeptime)
+        time.sleep(sleeptime)
+
+    return tweetcache
+
+def get_old_tweets(tw, username, args, tweetcache):
+    """
+    Get tweets that are newer than what's in the cache.
+    """
+    fetching = True
+    known_min_id = None
+    while(fetching):
+
+        if len(tweetcache) == 0:
+            log.debug("Fetching first set of %d tweets...", args.batchsize)
+            tweets = tw.statuses.user_timeline(screen_name=username,
+                                               count=args.batchsize,
+                                               #exclude_replies=True,
+            )
+        else:
+            # Get earliest tweet id
+            min_id = tweetcache.get_min_id()
+            if known_min_id == min_id:
+                log.debug("Didn't find any new tweets. All done.")
+                break
+            known_min_id = min_id
             
-        except NoMoreTweets, e:
-            log.info("No more tweets available: %s", e)
-            return tweetcache
+            log.debug("Fetching %d tweets before tweet id: %s ...", args.batchsize, known_min_id - 1)
+            tweets = tw.statuses.user_timeline(screen_name=username,
+                                           count=args.batchsize,
+                                           max_id=known_min_id - 1,
+                                           #exclude_replies=True,
+                                       )
+            log.debug("Fetched %d tweets.", len(tweets))
+            if tweets == []:
+                log.debug("No more recent tweets to fetch.")
+                # Stop fetching
+                fetching = False
+                break
+            else:
+                tweetcache.save_tweets(username, tweets)
+
+        sleeptime = 60 / args.searchlimit
+        log.debug("sleeping for %s seconds...", sleeptime)
+        time.sleep(sleeptime)
+
+    return tweetcache
+
 
 def update_user_cache(tw, username, args, tweetcache):
 
@@ -306,4 +376,4 @@ if __name__ == '__main__':
     if not args.fetchonly:
         tweetcache = destroy_tweets(tw, args, tweetcache)
 
-    log.info("Done.")    
+    log.debug("Done.")    
