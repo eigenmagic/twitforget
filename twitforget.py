@@ -243,41 +243,6 @@ def get_old_tweets(tw, username, args, tweetcache):
 
     return tweetcache
 
-
-def update_user_cache(tw, username, args, tweetcache):
-
-    # Find the smallest tweet id in the tweet cache,
-    # and try to fetch another batch of tweets earlier than that
-    max_id = None    
-    if len(tweetcache) == 0:
-        log.debug("Fetching first set of %d tweets...", args.batchsize)
-        tweets = tw.statuses.user_timeline(screen_name=username,
-                                           count=args.batchsize,
-                                           #exclude_replies=True,
-                                       )
-    else:
-        max_id = tweetcache.get_min_id() - 1
-        log.debug("Fetching %d tweets before tweet id: %s ...", args.batchsize, max_id)
-        tweets = tw.statuses.user_timeline(screen_name=username,
-                                           max_id=max_id,
-                                           count=args.batchsize,
-                                           #exclude_replies=True,
-        )
-
-    if tweets == []:
-        raise NoMoreTweets("No tweets returned from Twitter.")
-
-    log.debug("Fetched %d tweets.", len(tweets))
-
-    tweetcache.save_tweets(username, tweets)
-
-    # If we didn't fetch any older tweets, then stop
-    if max_id == tweetcache.get_min_id():
-        log.debug("No more tweets.")
-        raise NoMoreTweets("Reached oldest tweet that Twitter will let us have.")
-        
-    return tweetcache
-
 def destroy_tweets(tw, args, tweetcache):
     
     #tweetset = sort_tweets(tweetcache)
