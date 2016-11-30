@@ -101,8 +101,8 @@ class TweetCache(object):
         c = self.conn.cursor()
         QUERY = """SELECT * FROM tweets
         WHERE id NOT IN
-        (SELECT id FROM tweets ORDER BY created_at DESC LIMIT ?)
-        ORDER BY created_at ASC
+        (SELECT id FROM tweets ORDER BY id DESC LIMIT ?)
+        ORDER BY id ASC
         """
         PARAMS = [keepnum, ]
         if deletenum is not None:
@@ -177,9 +177,12 @@ def get_new_tweets(tw, username, args, tweetcache):
     Get tweets that are newer than what's in the cache.
     """
     fetching = True
+    log.debug("Fetching new tweets...")
     while(fetching):
         # Get latest tweet id
         known_max_id = tweetcache.get_max_id()
+        log.debug("Getting tweets since %s ...", known_max_id)
+        
         tweets = tw.statuses.user_timeline(screen_name=username,
                                            count=args.batchsize,
                                            since_id=known_max_id,
@@ -278,6 +281,7 @@ def destroy_tweets(tw, args, tweetcache):
 
         log.info("Tweet %d of %d destroyed.", idx+1, len(destroy_tweetset))
         del_sleeptime = 60 / args.deletelimit
+        log.debug("sleeping for %s seconds...", del_sleeptime)
         time.sleep(del_sleeptime)
         
     return tweetcache
