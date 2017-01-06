@@ -270,11 +270,16 @@ def destroy_tweets(tw, args, tweetcache):
         except twitter.api.TwitterHTTPError, e:
             log.debug("Response: %s", e.response_data)
             errors = e.response_data['errors']
-            if len(errors) == 1 and errors[0]['code'] == 144:
-                log.warn("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
-                try:
+            log.debug("errors: %s", errors)
+            if len(errors) == 1:
+                if errors[0]['code'] == 144:
+                    log.warn("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
                     del tweetcache[twt['id']]
-                except KeyError:
+                elif errors[0]['code'] == 179:
+                    log.warn("Not authorised to delete tweet: [%s] %s", twt['id'], twt['content_text'])
+                    log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
+                    del tweetcache[twt['id']]
+                else:
                     raise
             else:
                 raise
@@ -325,7 +330,7 @@ if __name__ == '__main__':
     ap.add_argument('--loglevel', choices=['debug', 'info', 'warning', 'error', 'critical'], help="Set log output level.")
 
     ap.add_argument('--searchlimit', type=int, default=5, help="Max number of searches per minute.")
-    ap.add_argument('--deletelimit', type=int, default=5, help="Max number of deletes per minute.")
+    ap.add_argument('--deletelimit', type=int, default=60, help="Max number of deletes per minute.")
     
     args = ap.parse_args()
 
