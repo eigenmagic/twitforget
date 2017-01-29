@@ -260,6 +260,12 @@ def destroy_tweets(tw, args, tweetcache):
     for idx, twt in enumerate(destroy_tweetset):
         log.debug("Destroying tweet id %s [%s]: %s", twt['id'], twt['created_at'], twt['content_text'])
         try:
+
+            # Don't delete certain specific tweets, like Keybase proofs
+            if twt['id'] in args.nodelete:
+                log.debug("Not deleting tweet: %d", twt['id'])
+                continue
+            
             if not args.dryrun:
                 gone_twt = tw.statuses.destroy(id=twt['id'])
                 del tweetcache[twt['id']]
@@ -321,7 +327,7 @@ if __name__ == '__main__':
     ap.add_argument('-b', '--batchsize', type=int, default=200, help="Fetch this many tweets per API call (max is Twitter API max, currently 200)")
     ap.add_argument('-k', '--keep', type=int, default=5000, help="How many tweets to keep.")
     ap.add_argument('-d', '--delete', type=int, help="Only delete this many tweets.")
-
+    ap.add_argument('-n', '--nodelete', type=int, nargs='+', help="Don't delete tweets in this list.")
     ap.add_argument('--tweetcache', default='~/.tweetcache.db', help="File to store cache of tweet/date IDs")
 
     ap.add_argument('--fetchonly', action='store_true', help="Just run the fetch stage and then exit.")
