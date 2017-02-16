@@ -285,9 +285,16 @@ def destroy_tweets(tw, args, tweetcache):
                     log.warn("Not authorised to delete tweet: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
                     del tweetcache[twt['id']]
+                    
+                elif errors[0]['code'] == 34:
+                    log.warn("Page doesn't exist for: [%s] %s", twt['id'], twt['content_text'])
+                    log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
+                    del tweetcache[twt['id']]                    
                 else:
+                    log.critical("Unhandled response from Twitter for: [%s] %s", twt['id'], twt['content_text'])
                     raise
             else:
+                log.critical("Unhandled response from Twitter for: [%s] %s", twt['id'], twt['content_text'])
                 raise
 
         log.info("Tweet %d of %d destroyed.", idx+1, len(destroy_tweetset))
