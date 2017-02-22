@@ -289,6 +289,9 @@ def destroy_tweets(tw, args, tweetcache):
                 elif errors[0]['code'] == 34:
                     log.warn("Page doesn't exist for: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
+                    del tweetcache[twt['id']]
+                elif errors[0]['code'] == 63:
+                    log.warn("User you retweeted got suspended. Removing cache entry.")
                     del tweetcache[twt['id']]                    
                 else:
                     log.critical("Unhandled response from Twitter for: [%s] %s", twt['id'], twt['content_text'])
