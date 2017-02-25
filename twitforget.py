@@ -307,6 +307,31 @@ def destroy_tweets(tw, args, tweetcache):
         
     return tweetcache
 
+def augment_args(args):
+    """
+    Augment commandline arguments with config file parameters
+    """
+    cp = ConfigParser.SafeConfigParser()
+    cp.read(os.path.expanduser(args.config))
+    try:
+        nodelete = cp.get('twitter', 'nodelete')
+        nodelete = [int(x) for x in nodelete.split()]
+        log.debug('nodelete: %s', nodelete)
+
+        if args.nodelete is not None:
+            args.nodelete.extend(nodelete)
+        else:
+            args.nodelete = nodelete
+        log.debug('args: %s', args.nodelete)
+        
+    except ConfigParser.NoOptionError:
+        log.debug("No such option.")
+        pass
+
+
+
+    return args
+
 def authenticate(args):
     """
     Authenticate with Twitter and return an authenticated
@@ -354,6 +379,8 @@ if __name__ == '__main__':
         levelname = args.loglevel.upper()
         log.setLevel(getattr(logging, levelname))
 
+    args = augment_args(args)
+        
     tw = authenticate(args)
     tweetcache = load_tweetcache(args)
     log.debug("tweetcache loaded.")
