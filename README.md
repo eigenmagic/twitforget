@@ -38,28 +38,37 @@ This means that tweets older than your last 3200 tweets cannot be deleted by
 twitforget, but if you set up a regular schedule of deleting tweets, you
 can keep your tweet history from getting any bigger.
 
-## The tweetcache
-The tweetcache code is still present, but it's disabled. This is because it's
-actually counter-productive, because of the way the Twitter API works.
+### Verified Users
 
-The idea was that you'd cache tweets in case something went wrong as you
-fetched tens (or hundreds) of thousands of tweets the first time. We figured
-that if Twitter only let you grab the last 3200 tweets, if you deleted a
-block of, say 500 tweets, from within that 3200, then the start of the 3200
+If you're a verified user, it appears you can see more of your own history
+than a non-verified user, so twitforget can delete more of your history.
+
+## The tweetcache
+
+twitforget stores your tweet history in a SQLlite database stored by
+default in your home directory in `~/.tweetcache.db`.
+
+The idea is that you cache tweets in case something goes wrong as you
+fetch tens (or hundreds) of thousands of tweets the first time. We figured
+that if Twitter only lets you grab the last 3200 tweets, if you deleted a
+block of, say, 500 tweets from within that 3200, then the start of the 3200
 tweet window would go further back in time, to earlier tweets. You'd thus be
 able to look up those earlier tweets ids, and delete them.
 
 In that way, we could gradually work our way backwards through your tweetstream
 until we'd deleted all the tweets.
 
-Alas, it doesn't work that way.
+Alas, it doesn't seem to work that way for unverified users. It does work for
+verified users.
 
 Twitter seems to keep track of deleted tweets in some way (possibly related to
-Politwoops? http://www.csmonitor.com/Technology/2016/0108/Twitter-revives-Politwoops-the-tool-that-preserves-politicians-deleted-tweets) and includes them in the history count. The 3200 tweet
-limit thus seems to apply to tweets you sent, including any deleted ones.
+[Politwoops](http://www.csmonitor.com/Technology/2016/0108/Twitter-revives-Politwoops-the-tool-that-preserves-politicians-deleted-tweets)) and includes them in the history count. The 3200 tweet
+limit thus seems to apply to all tweets you sent, including any deleted ones.
 
 That's a drag, because it means we can't figure out a way for you to go back
 in time and delete your own tweets from early on in your Twitter stream, unless
-you keep a record of your tweet IDs somewhere else.
+you kept a record of your tweet IDs as you sent them.
 
-
+twitforget can help you from now on, by storing your tweet history, but you'll
+only be able to delete earlier tweets if you get verified or the API changes to
+permit unverified users from seeing back further into their own timeline.
