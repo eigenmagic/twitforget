@@ -47,7 +47,7 @@ class TweetCache(object):
     def create_schema(self):
         c = self.conn.cursor()
         c.execute("""CREATE TABLE tweets
-        (id integer, screen_name text, created_at datetime, content_text text)""")
+        (id integer, screen_name text, created_at datetime, content_text text, deleted bool)""")
         self.conn.commit()
 
     def __len__(self):
@@ -65,15 +65,26 @@ class TweetCache(object):
         self.conn.commit()
         return
 
+    def mark_deleted(self, tweetid):
+        # Don't actually delete tweet, just mark it as deleted
+        # This is so we can maintain a local archive, but know that
+        # the public state of the tweet is deleted.
+        log.debug("Marking tweet id %id as deleted in cache...", tweetid)
+        c = self.conn.cursor()
+        c.execute("UPDATE tweets SET (deleted = TRUE) WHERE id = ?", (tweetid,))
+        self.conn.commit()
+        return
+
     def save_tweets(self, username, tweets):
         c = self.conn.cursor()
         valset = [ ( twt['id'],
                      username,
                      twt['created_at'],
                      twt['text'],
+                     False,
                  ) for twt in tweets ]
         c.executemany("""INSERT INTO tweets
-            (id, screen_name, created_at, content_text)
+            (id, screen_name, created_at, content_text, deleted)
             VALUES (?, ?, ?, ?)""", valset)
         self.conn.commit()
         log.debug("Tweets saved in database.")
@@ -102,6 +113,7 @@ class TweetCache(object):
         QUERY = """SELECT * FROM tweets
         WHERE id NOT IN
         (SELECT id FROM tweets ORDER BY id DESC LIMIT ?)
+        AND deleted IS NOT 'TRUE'
         ORDER BY id ASC
         """
         PARAMS = [keepnum, ]
@@ -123,7 +135,7 @@ def save_tweetcache(args, tweetcache):
         log.debug("tweetcache disabled. Not saving tweets.")
         return
         
-    fieldnames = ('id', 'screen_name', 'created_at', 'content_text')
+    fieldnames = ('id', 'screen_name', 'created_at', 'content_text', 'deleted')
     
     with open(os.path.expanduser(args.tweetcache), 'w') as ofd:
         csv_writer = csv.DictWriter(ofd, fieldnames)
@@ -205,7 +217,7 @@ def get_new_tweets(tw, username, args, tweetcache):
 
 def get_old_tweets(tw, username, args, tweetcache):
     """
-    Get tweets that are newer than what's in the cache.
+    Get tweets that are older than what's in the cache.
     """
     fetching = True
     known_min_id = None
@@ -233,7 +245,7 @@ def get_old_tweets(tw, username, args, tweetcache):
                                        )
             log.debug("Fetched %d tweets.", len(tweets))
             if tweets == []:
-                log.debug("No more recent tweets to fetch.")
+                log.debug("No more old tweets to fetch.")
                 # Stop fetching
                 fetching = False
                 break
@@ -268,7 +280,7 @@ def destroy_tweets(tw, args, tweetcache):
             
             if not args.dryrun:
                 gone_twt = tw.statuses.destroy(id=twt['id'])
-                del tweetcache[twt['id']]
+                tweetcache.mark_deleted([twt['id']])
                 log.debug("Gone tweet %s: %s", gone_twt['id'], gone_twt['text'])
             else:
                 log.debug("Tweet not actually deleted.")
@@ -280,19 +292,19 @@ def destroy_tweets(tw, args, tweetcache):
             if len(errors) == 1:
                 if errors[0]['code'] == 144:
                     log.warn("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
-                    del tweetcache[twt['id']]
+                    tweetcache.mark_deleted([twt['id']])
                 elif errors[0]['code'] == 179:
                     log.warn("Not authorised to delete tweet: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
-                    del tweetcache[twt['id']]
+                    tweetcache.mark_deleted([twt['id']])
                     
                 elif errors[0]['code'] == 34:
                     log.warn("Page doesn't exist for: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
-                    del tweetcache[twt['id']]
+                    tweetcache.mark_deleted([twt['id']])
                 elif errors[0]['code'] == 63:
                     log.warn("User you retweeted got suspended. Removing cache entry.")
-                    del tweetcache[twt['id']]                    
+                    tweetcache.mark_deleted([twt['id']])                    
                 else:
                     log.critical("Unhandled response from Twitter for: [%s] %s", twt['id'], twt['content_text'])
                     raise
