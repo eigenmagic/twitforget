@@ -85,7 +85,7 @@ class TweetCache(object):
                  ) for twt in tweets ]
         c.executemany("""INSERT INTO tweets
             (id, screen_name, created_at, content_text, deleted)
-            VALUES (?, ?, ?, ?)""", valset)
+            VALUES (?, ?, ?, ?, ?)""", valset)
         self.conn.commit()
         log.debug("Tweets saved in database.")
 
