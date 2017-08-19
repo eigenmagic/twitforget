@@ -71,7 +71,7 @@ class TweetCache(object):
         # the public state of the tweet is deleted.
         log.debug("Marking tweet id %id as deleted in cache...", tweetid)
         c = self.conn.cursor()
-        c.execute("UPDATE tweets SET (deleted = TRUE) WHERE id = ?", (tweetid,))
+        c.execute("UPDATE tweets SET deleted = ? WHERE id = ?", (True, tweetid,))
         self.conn.commit()
         return
 
@@ -280,7 +280,7 @@ def destroy_tweets(tw, args, tweetcache):
             
             if not args.dryrun:
                 gone_twt = tw.statuses.destroy(id=twt['id'])
-                tweetcache.mark_deleted([twt['id']])
+                tweetcache.mark_deleted(twt['id'])
                 log.debug("Gone tweet %s: %s", gone_twt['id'], gone_twt['text'])
             else:
                 log.debug("Tweet not actually deleted.")
@@ -292,19 +292,19 @@ def destroy_tweets(tw, args, tweetcache):
             if len(errors) == 1:
                 if errors[0]['code'] == 144:
                     log.warn("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
-                    tweetcache.mark_deleted([twt['id']])
+                    tweetcache.mark_deleted(twt['id'])
                 elif errors[0]['code'] == 179:
                     log.warn("Not authorised to delete tweet: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
-                    tweetcache.mark_deleted([twt['id']])
+                    tweetcache.mark_deleted(twt['id'])
                     
                 elif errors[0]['code'] == 34:
                     log.warn("Page doesn't exist for: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
-                    tweetcache.mark_deleted([twt['id']])
+                    tweetcache.mark_deleted(twt['id'])
                 elif errors[0]['code'] == 63:
                     log.warn("User you retweeted got suspended. Removing cache entry.")
-                    tweetcache.mark_deleted([twt['id']])                    
+                    tweetcache.mark_deleted(twt['id'])                    
                 else:
                     log.critical("Unhandled response from Twitter for: [%s] %s", twt['id'], twt['content_text'])
                     raise
