@@ -113,10 +113,10 @@ class TweetCache(object):
         QUERY = """SELECT * FROM tweets
         WHERE id NOT IN
         (SELECT id FROM tweets ORDER BY id DESC LIMIT ?)
-        AND deleted IS NOT 'TRUE'
+        AND deleted IS NOT ?
         ORDER BY id ASC
         """
-        PARAMS = [keepnum, ]
+        PARAMS = [keepnum, True]
         if deletenum is not None:
             QUERY += " LIMIT ?"
             PARAMS.append(deletenum)
