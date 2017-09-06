@@ -47,14 +47,24 @@ class TweetCache(object):
     def create_schema(self):
         c = self.conn.cursor()
         c.execute("""CREATE TABLE tweets
-        (id integer, screen_name text, created_at datetime, content_text text, deleted bool)""")
+        (id integer UNIQUE, screen_name text, created_at datetime, content_text text, deleted bool)""")
         self.conn.commit()
 
     def __len__(self):
         c = self.conn.cursor()
         c.execute("SELECT count(*) FROM tweets")
         result = c.fetchone()[0]
-        log.debug("There are %d tweets.", result)
+        log.debug("There are %d tweets in the cache.", result)
+        return result
+
+    def get_deleted_count(self):
+        """
+        Find out how many tweets in the cache are deleted.
+        """
+        c = self.conn.cursor()
+        c.execute("SELECT count(*) FROM tweets WHERE deleted = ?", (True,))
+        result = c.fetchone()[0]
+        log.debug("There are %d deleted tweets in the cache.", result)
         return result
 
     def __delitem__(self, tweetid):
@@ -83,22 +93,43 @@ class TweetCache(object):
                      twt['text'],
                      False,
                  ) for twt in tweets ]
-        c.executemany("""INSERT INTO tweets
+        
+        c.executemany("""INSERT OR IGNORE INTO tweets
             (id, screen_name, created_at, content_text, deleted)
             VALUES (?, ?, ?, ?, ?)""", valset)
         self.conn.commit()
         log.debug("Tweets saved in database.")
 
-    def get_min_id(self):
+    def get_min_id(self, undeleted=False, ignoreids=None):
+        """
+        Get the minimum tweet id in the cache.
+        Ignore deleted messages if undeleted is True.
+        """
         c = self.conn.cursor()
-        c.execute("SELECT min(id) FROM tweets")
+        if undeleted:
+            log.debug("Ignoring tweets: %s", ignoreids)
+            # SQLite doesn't support lists for parameters, apparently, so we need to be
+            # careful here lest we introduce a SQL-injection
+            idlist = ','.join([ '%d' % x for x in ignoreids ])
+            log.debug(idlist)
+            
+            c.execute("SELECT min(id) FROM tweets WHERE deleted = ? AND id NOT IN (%s)" % idlist, (False,) )
+        else:
+            c.execute("SELECT min(id) FROM tweets")
         res = c.fetchone()[0]
         log.debug("minimum id is: %d", res)
         return res
 
-    def get_max_id(self):
+    def get_max_id(self, undeleted=False):
+        """
+        Get the maximum tweet id in the cache.
+        Ignore deleted messages if undeleted is True.
+        """
         c = self.conn.cursor()
-        c.execute("SELECT max(id) FROM tweets")
+        if undeleted:
+            c.execute("SELECT max(id) FROM tweets WHERE deleted = ?", (True,))                    
+        else:
+            c.execute("SELECT max(id) FROM tweets")
         res = c.fetchone()[0]
         log.debug("max id is: %d", res)
         return res
@@ -129,7 +160,7 @@ def save_tweetcache(args, tweetcache):
     """
     Save fetched tweets into the tweetcache.
     """
-    log.debug("tweetcache passed in has %d records.", len(tweetcache))
+    log.debug("tweetcache passed in has %d records, %d deleted tweets", len(tweetcache), tweetcache.get_deleted_count())
     
     if args.no_tweetcache:
         log.debug("tweetcache disabled. Not saving tweets.")
@@ -192,12 +223,17 @@ def get_new_tweets(tw, username, args, tweetcache):
     log.debug("Fetching new tweets...")
     while(fetching):
         # Get latest tweet id
-        known_max_id = tweetcache.get_max_id()
+        # We want to include tweets marked as deleted, because they
+        # are in the cache and will affect the max id possible.
+        # Because we delete old tweets, the oldest deleted id will
+        # usually (always?) be smaller than the latest tweet id.
+        known_max_id = tweetcache.get_max_id(undeleted=False)
         log.debug("Getting tweets since %s ...", known_max_id)
         
         tweets = tw.statuses.user_timeline(screen_name=username,
                                            count=args.batchsize,
                                            since_id=known_max_id,
+                                           trim_user=True,                                           
                                            #exclude_replies=True,
                                        )
         log.debug("Fetched %d tweets.", len(tweets))
@@ -227,11 +263,17 @@ def get_old_tweets(tw, username, args, tweetcache):
             log.debug("Fetching first set of %d tweets...", args.batchsize)
             tweets = tw.statuses.user_timeline(screen_name=username,
                                                count=args.batchsize,
+                                               trim_user=True,
                                                #exclude_replies=True,
             )
         else:
-            # Get earliest tweet id
-            min_id = tweetcache.get_min_id()
+            # Keeping a cache of both deleted and undeleted tweets creates issues.
+            # Once old tweets are deleted, we might never fetch new ones if we
+            # only look for tweets older than the earliest tweet in the cache,
+            # so we need to exclude deleted tweets when looking for old tweets.
+            log.debug("There are %d tweets, %d deleted", len(tweetcache), tweetcache.get_deleted_count())
+            # Get earliest tweet id that hasn't been deleted
+            min_id = tweetcache.get_min_id(undeleted=True, ignoreids=args.nodelete)
             if known_min_id == min_id:
                 log.debug("Didn't find any new tweets. All done.")
                 break
@@ -241,6 +283,7 @@ def get_old_tweets(tw, username, args, tweetcache):
             tweets = tw.statuses.user_timeline(screen_name=username,
                                            count=args.batchsize,
                                            max_id=known_min_id - 1,
+                                           trim_user=True,                                           
                                            #exclude_replies=True,
                                        )
             log.debug("Fetched %d tweets.", len(tweets))
