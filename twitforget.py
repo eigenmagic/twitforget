@@ -21,6 +21,8 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('twitforget')
 
+SQLDATE_FMT = 'ddd MMM DD hh:mm:ss Z YYYY'
+
 class NoMoreTweets(Exception):
     """
     Raised if there are no more tweets to fetch.
@@ -172,26 +174,61 @@ class TweetCache(object):
         """
         PARAMS = [True]
 
-        log.debug("%s: %s", QUERY, PARAMS)            
         c.execute(QUERY, PARAMS)
         result = c.fetchall()
-        log.debug("got results: %d", len(result))
 
         # Find up to deletenum tweets with dates before 'beforedays' days ago
         beforedate = arrow.now().shift(days=-beforedays)
-        sqldate_fmt = 'ddd MMM DD hh:mm:ss Z YYYY'
         destroy_set = []
         for i, row in enumerate(result):
-            #log.debug("row is: %s", row['created_at'])
-            if arrow.get(row['created_at'], sqldate_fmt) < beforedate:
-                #log.debug("Tweet should be deleted")
+            if arrow.get(row['created_at'], SQLDATE_FMT) < beforedate:
                 destroy_set.append(row)
             # enumerate() starts at 0
             if deletemax and i+1 >= deletemax:
                 break
-        log.debug("There are %d tweets to delete.", len(destroy_set))
         return destroy_set
-        
+
+
+    def get_destroy_set_dates(self, date_before, date_after=None, deletemax=None):
+        """
+        Find tweet destroy list, using dates method.
+
+        Returns a set of up to deletenum tweets sorted by age,
+        with created_at date of earlier than date_before
+        but later than date_after (if set).
+        """
+        # Because SQLite doesn't do dates properly, we will
+        # use Python's date handing instead.
+        c = self.conn.cursor()
+        QUERY = """SELECT * FROM tweets
+        WHERE
+          deleted IS NOT ?
+        ORDER BY id ASC
+        """
+        PARAMS = [True]
+
+        c.execute(QUERY, PARAMS)
+        result = c.fetchall()
+
+        # Find up to deletenum tweets with dates between
+        # date_before and date_after
+        destroy_set = []
+        for i, row in enumerate(result):
+            tweet_date = arrow.get(row['created_at'], SQLDATE_FMT)
+
+            if tweet_date < date_before:
+                # Also check date_after if it's set
+                if date_after:
+                    if tweet_date > date_after:
+                        destroy_set.append(row)
+                else:
+                    destroy_set.append(row)
+
+            # enumerate() starts at 0
+            if deletemax and i+1 >= deletemax:
+                break
+        return destroy_set
+
 def save_tweetcache(args, tweetcache):
     """
     Save fetched tweets into the tweetcache.
@@ -346,7 +383,7 @@ def get_destroy_set(args):
     # 3. Number of tweets to keep mode
     if args.date_before is not None:
         log.debug("Using date based mode.")
-        pass
+        destroy_tweetset = tweetcache.get_destroy_set_dates(args.date_before, args.date_after, args.deletemax)        
 
     elif args.beforedays is not None:
         log.debug("Using days before mode.")
@@ -439,8 +476,6 @@ def augment_args(args):
     except ConfigParser.NoOptionError:
         log.debug("No such option.")
         pass
-
-
 
     return args
 
