@@ -7,7 +7,7 @@ import os.path
 import argparse
 import ConfigParser
 from itertools import izip_longest
-import datetime
+import arrow
 
 import csv
 
@@ -20,6 +20,8 @@ import logging
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('twitforget')
+
+SQLDATE_FMT = 'ddd MMM DD hh:mm:ss Z YYYY'
 
 class NoMoreTweets(Exception):
     """
@@ -134,9 +136,9 @@ class TweetCache(object):
         log.debug("max id is: %d", res)
         return res
     
-    def get_destroy_set(self, keepnum, deletenum=None):
+    def get_destroy_set_keepnum(self, keepnum, deletemax=None):
         """
-        Return a list of tweets to destroy.
+        Find tweet destroy list, using keepnum method.
 
         Returns a set of tweets sorted by age, keeping keepnum of the newest ones.
         """
@@ -148,14 +150,85 @@ class TweetCache(object):
         ORDER BY id ASC
         """
         PARAMS = [keepnum, True]
-        if deletenum is not None:
+        if deletemax is not None:
             QUERY += " LIMIT ?"
-            PARAMS.append(deletenum)
+            PARAMS.append(deletemax)
             
         c.execute(QUERY, PARAMS)
         result = c.fetchall()
         return result
-        
+
+    def get_destroy_set_beforedays(self, beforedays, deletemax=None):
+        """
+        Find tweet destroy list, using beforedays method.
+
+        Returns a set of up to deletenum tweets sorted by age, from at least beforedays ago.
+        """
+        # Because SQLite doesn't do dates properly, we will
+        # use Python's date handing instead.
+        c = self.conn.cursor()
+        QUERY = """SELECT * FROM tweets
+        WHERE
+          deleted IS NOT ?
+        ORDER BY id ASC
+        """
+        PARAMS = [True]
+
+        c.execute(QUERY, PARAMS)
+        result = c.fetchall()
+
+        # Find up to deletenum tweets with dates before 'beforedays' days ago
+        beforedate = arrow.now().shift(days=-beforedays)
+        destroy_set = []
+        for i, row in enumerate(result):
+            if arrow.get(row['created_at'], SQLDATE_FMT) < beforedate:
+                destroy_set.append(row)
+            # enumerate() starts at 0
+            if deletemax and i+1 >= deletemax:
+                break
+        return destroy_set
+
+
+    def get_destroy_set_dates(self, date_before, date_after=None, deletemax=None):
+        """
+        Find tweet destroy list, using dates method.
+
+        Returns a set of up to deletenum tweets sorted by age,
+        with created_at date of earlier than date_before
+        but later than date_after (if set).
+        """
+        # Because SQLite doesn't do dates properly, we will
+        # use Python's date handing instead.
+        c = self.conn.cursor()
+        QUERY = """SELECT * FROM tweets
+        WHERE
+          deleted IS NOT ?
+        ORDER BY id ASC
+        """
+        PARAMS = [True]
+
+        c.execute(QUERY, PARAMS)
+        result = c.fetchall()
+
+        # Find up to deletenum tweets with dates between
+        # date_before and date_after
+        destroy_set = []
+        for i, row in enumerate(result):
+            tweet_date = arrow.get(row['created_at'], SQLDATE_FMT)
+
+            if tweet_date < date_before:
+                # Also check date_after if it's set
+                if date_after:
+                    if tweet_date > date_after:
+                        destroy_set.append(row)
+                else:
+                    destroy_set.append(row)
+
+            # enumerate() starts at 0
+            if deletemax and i+1 >= deletemax:
+                break
+        return destroy_set
+
 def save_tweetcache(args, tweetcache):
     """
     Save fetched tweets into the tweetcache.
@@ -301,14 +374,35 @@ def get_old_tweets(tw, username, args, tweetcache):
 
     return tweetcache
 
+def get_destroy_set(args):
+    """ Find the set of tweets to destroy
+    """
+    # Priority order for the way we find tweets to delete is:
+    # 1. Date based mode (--date-before and --date-after)
+    # 2. Days before based mode
+    # 3. Number of tweets to keep mode
+    if args.date_before is not None:
+        log.debug("Using date based mode.")
+        destroy_tweetset = tweetcache.get_destroy_set_dates(args.date_before, args.date_after, args.deletemax)        
+
+    elif args.beforedays is not None:
+        log.debug("Using days before mode.")
+        destroy_tweetset = tweetcache.get_destroy_set_beforedays(args.beforedays, args.deletemax)
+
+    else:
+        log.debug("Using number to keep mode.")
+        destroy_tweetset = tweetcache.get_destroy_set_keepnum(args.keep, args.deletemax)
+
+    return destroy_tweetset
+
 def destroy_tweets(tw, args, tweetcache):
     
     #tweetset = sort_tweets(tweetcache)
 
     # Delete tweets older than the number we're going to keep
     #log.debug("First 5 tweets: %s", tweetset[:5])
-    log.debug("Keeping %d tweets...", args.keep)
-    destroy_tweetset = tweetcache.get_destroy_set(args.keep, args.delete)
+    #log.debug("Keeping %d tweets...", args.keep)
+    destroy_tweetset = get_destroy_set(args)
 
     log.debug("Need to destroy %d tweets.", len(destroy_tweetset))
     
@@ -383,8 +477,6 @@ def augment_args(args):
         log.debug("No such option.")
         pass
 
-
-
     return args
 
 def authenticate(args):
@@ -406,7 +498,16 @@ def authenticate(args):
                                             con_secret,
                                             con_secret_key))
     return tw
-    
+
+def valid_date(s):
+    """ Parse a string to see if it's a valid date or not
+    """
+    try:
+        return arrow.get(s)
+    except ValueError:
+        msg = "Not a valid date: '{0}'.".format(s)
+        raise argparse.ArgumentTypeError(msg)
+
 if __name__ == '__main__':
 
     ap = argparse.ArgumentParser(description="Delete old tweets",
@@ -416,8 +517,13 @@ if __name__ == '__main__':
     ap.add_argument('-c', '--config', default='~/.twitrc', help="Config file")
     ap.add_argument('-b', '--batchsize', type=int, default=200, help="Fetch this many tweets per API call (max is Twitter API max, currently 200)")
     ap.add_argument('-k', '--keep', type=int, default=5000, help="How many tweets to keep.")
-    ap.add_argument('-d', '--delete', type=int, help="Only delete this many tweets.")
+    ap.add_argument('-d', '--deletemax', type=int, help="Only delete this many tweets.")
     ap.add_argument('-n', '--nodelete', type=int, nargs='+', help="Don't delete tweets in this list.")
+
+    ap.add_argument('-B', '--date-before', help="Delete tweets before this date.", type=valid_date)
+    ap.add_argument('-A', '--date-after', help="Delete tweets after this date.", type=valid_date)
+    ap.add_argument('--beforedays', type=int, help="Delete tweets from before this many days ago.")
+
     ap.add_argument('--tweetcache', default='~/.tweetcache.db', help="File to store cache of tweet/date IDs")
 
     ap.add_argument('--fetchonly', action='store_true', help="Just run the fetch stage and then exit.")
@@ -434,8 +540,14 @@ if __name__ == '__main__':
         levelname = args.loglevel.upper()
         log.setLevel(getattr(logging, levelname))
 
+    # Safety feature: If you specific --after-date, force to also
+    # provide --before-date to prevent accidental deletion of all tweets.
+    if args.date_after is not None:
+        if args.date_before is None:
+            raise argparse.ArgumentError("Need to provide --before-date as well as --after-date.")
+
     args = augment_args(args)
-        
+
     tw = authenticate(args)
     tweetcache = load_tweetcache(args)
     log.debug("tweetcache loaded.")
