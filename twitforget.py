@@ -544,7 +544,7 @@ if __name__ == '__main__':
     # provide --before-date to prevent accidental deletion of all tweets.
     if args.date_after is not None:
         if args.date_before is None:
-            raise argparse.ArgumentError("Need to provide --before-date as well as --after-date.")
+            ap.error("Safety feature: Need to provide --before-date as well as --after-date.")
 
     args = augment_args(args)
 
