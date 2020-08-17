@@ -228,29 +228,6 @@ class TweetCache(object):
             if deletemax and i+1 >= deletemax:
                 break
         return destroy_set
-
-def save_tweetcache(args, tweetcache):
-    """
-    Save fetched tweets into the tweetcache.
-    """
-    log.debug("tweetcache passed in has %d records, %d deleted tweets", len(tweetcache), tweetcache.get_deleted_count())
-    
-    if args.no_tweetcache:
-        log.debug("tweetcache disabled. Not saving tweets.")
-        return
-        
-    fieldnames = ('id', 'screen_name', 'created_at', 'content_text', 'deleted')
-    
-    with open(os.path.expanduser(args.tweetcache), 'w') as ofd:
-        csv_writer = csv.DictWriter(ofd, fieldnames)
-        csv_writer.writeheader()
-        tweetset = sort_tweets(tweetcache)
-        for item in tweetset:
-            log.debug("Writing row: %s", item)
-            csv_writer.writerow(item)
-            pass
-        pass
-    pass
     
 def load_tweetcache(args):
     """
