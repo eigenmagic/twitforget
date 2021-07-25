@@ -93,12 +93,29 @@ class TweetCache(object):
 
     def save_tweets(self, username, tweets):
         c = self.conn.cursor()
-        valset = [ ( twt['id'],
-                     username,
-                     twt['created_at'],
-                     twt['full_text'],
-                     False,
-                 ) for twt in tweets ]
+
+        valset = []
+        for twt in tweets:
+            if 'full_text' in twt:
+                valset.append(
+                    (twt['id'],
+                    username,
+                    twt['created_at'],
+                    twt['full_text'],
+                    False,
+                    )
+                )
+            else:
+                valset.append(
+                    (twt['id'],
+                    username,
+                    twt['created_at'],
+                    twt['text'],
+                    False,
+                    )
+                )
+        # valset = [ ( 
+        #          ) for twt in tweets ]
 
         c.executemany("""INSERT OR IGNORE INTO tweets
             (id, screen_name, created_at, content_text, deleted)
