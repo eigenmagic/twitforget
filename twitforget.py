@@ -114,8 +114,6 @@ class TweetCache(object):
                     False,
                     )
                 )
-        # valset = [ ( 
-        #          ) for twt in tweets ]
 
         c.executemany("""INSERT OR IGNORE INTO tweets
             (id, screen_name, created_at, content_text, deleted)
@@ -392,7 +390,7 @@ def get_destroy_set(args):
     return destroy_tweetset
 
 def destroy_tweets(tw, args, tweetcache):
-
+    """Destroy tweets based on method chosen in args"""
     #tweetset = sort_tweets(tweetcache)
 
     # Delete tweets older than the number we're going to keep
@@ -404,7 +402,7 @@ def destroy_tweets(tw, args, tweetcache):
         log.debug("Destroying tweet id %s [%s]: %s", twt['id'], twt['created_at'], twt['content_text'])
         try:
 
-            # Don't delete certain specific tweets, like Keybase proofs
+            # Don't delete certain specific tweets
             if twt['id'] in args.keeplist:
                 log.debug("Not deleting tweet: %d", twt['id'])
                 continue
@@ -424,6 +422,7 @@ def destroy_tweets(tw, args, tweetcache):
                 if errors[0]['code'] == 144:
                     log.warn("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
                     tweetcache.mark_deleted(twt['id'])
+                
                 elif errors[0]['code'] == 179:
                     log.warn("Not authorised to delete tweet: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
@@ -433,9 +432,11 @@ def destroy_tweets(tw, args, tweetcache):
                     log.warn("Page doesn't exist for: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
                     tweetcache.mark_deleted(twt['id'])
+
                 elif errors[0]['code'] == 63:
                     log.warn("User you retweeted got suspended. Removing cache entry.")
                     tweetcache.mark_deleted(twt['id'])
+
                 else:
                     log.critical("Unhandled response from Twitter for: [%s] %s", twt['id'], twt['content_text'])
                     raise
@@ -475,9 +476,7 @@ def import_twitter_archive(tw, args, tweetcache):
     return tweetcache
 
 def augment_args(args):
-    """
-    Augment commandline arguments with config file parameters
-    """
+    """Augment commandline arguments with config file parameters"""
     cp = ConfigParser.SafeConfigParser()
     cp.read(os.path.expanduser(args.config))
     try:
@@ -518,8 +517,7 @@ def authenticate(args):
     return tw
 
 def valid_date(s):
-    """ Parse a string to see if it's a valid date or not
-    """
+    """Parse a string to see if it's a valid date or not"""
     try:
         return arrow.get(s)
     except ValueError:
