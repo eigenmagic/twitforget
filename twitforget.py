@@ -325,7 +325,7 @@ def get_old_tweets(tw, username, args, tweetcache):
             # so we need to exclude deleted tweets when looking for old tweets.
             log.debug("There are %d tweets, %d deleted", len(tweetcache), tweetcache.get_deleted_count())
             # Get earliest tweet id that hasn't been deleted
-            min_id = tweetcache.get_min_id(undeleted=True, ignoreids=args.nodelete)
+            min_id = tweetcache.get_min_id(undeleted=True, ignoreids=args.keeplist)
             if known_min_id == min_id:
                 log.debug("Didn't find any new tweets. All done.")
                 break
@@ -370,7 +370,7 @@ def get_destroy_set(args):
 
     else:
         log.debug("Using number to keep mode.")
-        destroy_tweetset = tweetcache.get_destroy_set_keepnum(args.keep, args.deletemax)
+        destroy_tweetset = tweetcache.get_destroy_set_keepnum(args.keepnum, args.deletemax)
 
     return destroy_tweetset
 
@@ -379,8 +379,6 @@ def destroy_tweets(tw, args, tweetcache):
     #tweetset = sort_tweets(tweetcache)
 
     # Delete tweets older than the number we're going to keep
-    #log.debug("First 5 tweets: %s", tweetset[:5])
-    #log.debug("Keeping %d tweets...", args.keep)
     destroy_tweetset = get_destroy_set(args)
 
     log.debug("Need to destroy %d tweets.", len(destroy_tweetset))
@@ -390,7 +388,7 @@ def destroy_tweets(tw, args, tweetcache):
         try:
 
             # Don't delete certain specific tweets, like Keybase proofs
-            if twt['id'] in args.nodelete:
+            if twt['id'] in args.keeplist:
                 log.debug("Not deleting tweet: %d", twt['id'])
                 continue
 
@@ -466,15 +464,15 @@ def augment_args(args):
     cp = ConfigParser.SafeConfigParser()
     cp.read(os.path.expanduser(args.config))
     try:
-        nodelete = cp.get('twitter', 'nodelete')
-        nodelete = [int(x) for x in nodelete.split()]
-        log.debug('nodelete: %s', nodelete)
+        keeplist = cp.get('twitter', 'keeplist')
+        keeplist = [int(x) for x in keeplist.split()]
+        log.debug('keeplist: %s', keeplist)
 
-        if args.nodelete is not None:
-            args.nodelete.extend(nodelete)
+        if args.keeplist is not None:
+            args.keeplist.extend(keeplist)
         else:
-            args.nodelete = nodelete
-        log.debug('args: %s', args.nodelete)
+            args.keeplist = keeplist
+        log.debug('args: %s', args.keeplist)
 
     except ConfigParser.NoOptionError:
         log.debug("No such option.")
@@ -519,19 +517,20 @@ if __name__ == '__main__':
 
     ap.add_argument('-c', '--config', default='~/.twitrc', help="Config file")
     ap.add_argument('-b', '--batchsize', type=int, default=200, help="Fetch this many tweets per API call (max is Twitter API max, currently 200)")
-    ap.add_argument('-k', '--keep', type=int, default=5000, help="How many tweets to keep.")
     ap.add_argument('-d', '--deletemax', type=int, help="Only delete this many tweets.")
-    ap.add_argument('-n', '--nodelete', type=int, nargs='+', help="Don't delete tweets in this list.")
+    ap.add_argument('-k', '--keeplist', type=int, nargs='+', help="Don't delete tweets in this list.")
 
     ap.add_argument('-B', '--date-before', help="Delete tweets before this date.", type=valid_date)
     ap.add_argument('-A', '--date-after', help="Delete tweets after this date.", type=valid_date)
+    ap.add_argument('-K', '--keepnum', type=int, default=5000, help="How many tweets to keep.")
+
     ap.add_argument('--beforedays', type=int, help="Delete tweets from before this many days ago.")
 
     ap.add_argument('-i', '--importfile', default=None, help="Import tweets from Twitter archive.")
 
     ap.add_argument('--tweetcache', default='~/.tweetcache.db', help="File to store cache of tweet/date IDs")
 
-    ap.add_argument('--fetchonly', action='store_true', help="Just run the fetch stage and then exit.")
+    ap.add_argument('--nodelete', action='store_true', help="Skip the delete stage.")
     ap.add_argument('--nofetch', action='store_true', help="Skip the fetch stage.")
 
     ap.add_argument('--dryrun', action='store_true', help="Don't actually delete tweets, but do populate cache.")
@@ -572,7 +571,7 @@ if __name__ == '__main__':
     if tweetcache is None:
         raise ValueError("Unable to load any tweets for this user.")
 
-    if not args.fetchonly:
+    if not args.nodelete:
         tweetcache = destroy_tweets(tw, args, tweetcache)
 
     log.debug("Done.")

@@ -3,13 +3,15 @@
 
 Twitforget uses the Twitter API to delete your tweet history.
 
-## Setup
+## Getting Started
+
+### Authorising the app
 
 You need to authorise the app with a Twitter access token for your
 Twitter account. Follow the instructions here:
 https://dev.twitter.com/oauth/overview/application-owner-access-tokens
 
-Add the access token to a configuration file, (defaults to ~/.twitrc) like
+Add the access token to a configuration file, (defaults to ```~/.twitrc```) like
 this:
 
 ```
@@ -20,55 +22,108 @@ con_secret = <con_secret>
 con_secret_key = <con_secret_key>
 ```
 
+### Loading your tweet archive
+
+You can bootstrap twitforget by [asking Twitter for an archive of all your tweets](https://help.twitter.com/en/managing-your-account/how-to-download-your-twitter-archive).
+Twitforget can then read in this archive and use it to keep track of your tweets
+from that point onwards, deleting your history as you go.
+
+To request your Twitter archive, [follow the instructions here](https://help.twitter.com/en/managing-your-account/how-to-download-your-twitter-archive).
+
+Once you've downloaded the archive ZIP file, load it with twitforget like this:
+
+```
+./twitforget.py -i <zipfile> --nofetch --nodelete <your_twitter_handle>
+```
+This will just load the data from the archive and won't do anything else.
+
+You're now ready to start deleting your tweets!
+
 ## How it works
-twitforget fetches a list of your tweet history, and deletes all but your
-last *n* tweets. You can tell twitforget how many tweets to keep using the
-```-k``` flag.
+Twitforget fetches a list of your tweet history, and then deletes tweets using a
+few different methods, depending on how you want to maintain your history.
 
 If you just want to test things without actually deleting any tweets,
 use the ```--dryrun``` flag.
 
+### ```-K``` Keep the last _n_ tweets
+
+The default method twitforget uses is to keep all but your last _n_ tweets. You
+can tell twitforget how many tweets to keep using the ```-K``` flag. It defaults to keeping the last 5000 tweets.
+
+### Keep the last _n_ days of tweets
+
+Use the ```--before-days``` flag to tell twitforget to delete tweets sent more
+than _n_ days ago. Use it to keep anything more recent.
+
+### Delete tweets in a date range
+
+Use the ```-A```/```--after-days``` and the ```-B```/```--before-days``` flags
+to define a date range to delete tweets. Twitforget will delete all the tweets
+before ```--before-days``` and after ```--after-days```.
+
+### Keep specific tweets
+
+You might particularly like certain tweets and would prefer to keep them. No
+problem! Tell twitforget to keep those tweets using the -k flag and providing
+the tweet id for the good tweet. You can provide the flag multiple times if you
+have more than one good tweet you'd like to keep.
+
+That can get a bit tedious when you have a lot of good tweets you want to keep,
+so you can also add the tweet ids to your config file with the ```keeplist```
+parameter and twitforget will always know to keep those tweets.
+
+Something like this:
+```
+keeplist = 825526299879829504
+    846940673173540864
+    846941755597574145
+    869115756755034112
+    875394335298142208
+```
+(These are real tweets of mine that I've decided to keep, so you can go check.)
+
+If you make a new, good tweet and decide to keep it, just add it to the list.
+
 ## Limitations
 
+### 3200 tweet history limit
+
 Twitforget has a limitation imposed by Twitter: Twitter only lets you see your
-last 3200 tweets, so if you've tweeted more than that, you can't delete
-tweets earlier than that unless you can somehow find their tweet id.
+last 3200 tweets.
 
-This means that tweets older than your last 3200 tweets cannot be deleted by
-twitforget, but if you set up a regular schedule of deleting tweets, you
-can keep your tweet history from getting any bigger.
+If you've sent more tweets than that since the last time twitforget added tweets
+to its database, you can't delete tweets older than the 3200 limit unless you
+get a new archive from twitter and augment your current tweetcache.
 
-### Verified Users
+twitforget won't overwrite existing information in the tweetcache, so you can
+safely load in a Twitter archive file as many times as you like. It'll only add
+missing tweets.
+
+#### Verified Users
 
 If you're a verified user, it appears you can see more of your own history
 than a non-verified user, so twitforget can delete more of your history.
 
+### API limits
+
+Twitforget deliberately runs a little bit slower than what the Twitter API
+limits allow (at time of writing) so the first run of deleting might take a
+little while, depending on how many tweets you have to delete.
+
+twitforget is design to run in the background on a schedule once you've done the
+initial load and purge of setup.
+
 ## The tweetcache
 
-twitforget stores your tweet history in a SQLlite database stored by
-default in your home directory in `~/.tweetcache.db`.
+twitforget stores a very basic summary of your tweet history in a SQLlite
+database stored by default in your home directory in `~/.tweetcache.db`.
 
-The idea is that you cache tweets in case something goes wrong as you
-fetch tens (or hundreds) of thousands of tweets the first time. We figured
-that if Twitter only lets you grab the last 3200 tweets, if you deleted a
-block of, say, 500 tweets from within that 3200, then the start of the 3200
-tweet window would go further back in time, to earlier tweets. You'd thus be
-able to look up those earlier tweets ids, and delete them.
+It only stores the tweet id, handle, tweet creation datetime, the tweet text as returned by Twitter, and whether or not twitforget thinks it's deleted the tweet.
 
-In that way, we could gradually work our way backwards through your tweetstream
-until we'd deleted all the tweets.
+If you want to store a full archive of your tweets, keep a copy of what Twitter
+sends you when you first set up this tool, and then periodically request an updated
+archive before you delete tweets with twitforget.
 
-Alas, it doesn't seem to work that way for unverified users. It does work for
-verified users.
-
-Twitter seems to keep track of deleted tweets in some way (possibly related to
-[Politwoops](http://www.csmonitor.com/Technology/2016/0108/Twitter-revives-Politwoops-the-tool-that-preserves-politicians-deleted-tweets)) and includes them in the history count. The 3200 tweet
-limit thus seems to apply to all tweets you sent, including any deleted ones.
-
-That's a drag, because it means we can't figure out a way for you to go back
-in time and delete your own tweets from early on in your Twitter stream, unless
-you kept a record of your tweet IDs as you sent them.
-
-twitforget can help you from now on, by storing your tweet history, but you'll
-only be able to delete earlier tweets if you get verified or the API changes to
-permit unverified users from seeing back further into their own timeline.
+One day we might start storing the full JSON payload returned from Twitter when
+we fetch tweet info, but keeping tweets isn't really what twitforget is about.
