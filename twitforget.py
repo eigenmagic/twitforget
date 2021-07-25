@@ -9,7 +9,9 @@ import ConfigParser
 from itertools import izip_longest
 import arrow
 
-import csv
+#import csv
+import zipfile
+import json
 
 import twitter
 import time
@@ -22,6 +24,8 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger('twitforget')
 
 SQLDATE_FMT = 'ddd MMM DD hh:mm:ss Z YYYY'
+
+TWEET_DATAFILE = 'data/tweet.js'
 
 class NoMoreTweets(Exception):
     """
@@ -71,7 +75,7 @@ class TweetCache(object):
 
     def __delitem__(self, tweetid):
         log.debug("Deleting tweet id %d from cache...", tweetid)
-        
+
         c = self.conn.cursor()
         c.execute("DELETE FROM tweets WHERE id = ?", (tweetid,))
         self.conn.commit()
@@ -92,15 +96,15 @@ class TweetCache(object):
         valset = [ ( twt['id'],
                      username,
                      twt['created_at'],
-                     twt['text'],
+                     twt['full_text'],
                      False,
                  ) for twt in tweets ]
-        
+
         c.executemany("""INSERT OR IGNORE INTO tweets
             (id, screen_name, created_at, content_text, deleted)
             VALUES (?, ?, ?, ?, ?)""", valset)
         self.conn.commit()
-        log.debug("Tweets saved in database.")
+        log.debug("Saved %d tweets into database.", len(valset))
 
     def get_min_id(self, undeleted=False, ignoreids=None):
         """
@@ -114,7 +118,7 @@ class TweetCache(object):
             # careful here lest we introduce a SQL-injection
             idlist = ','.join([ '%d' % x for x in ignoreids ])
             log.debug(idlist)
-            
+
             c.execute("SELECT min(id) FROM tweets WHERE deleted = ? AND id NOT IN (%s)" % idlist, (False,) )
         else:
             c.execute("SELECT min(id) FROM tweets")
@@ -129,13 +133,13 @@ class TweetCache(object):
         """
         c = self.conn.cursor()
         if undeleted:
-            c.execute("SELECT max(id) FROM tweets WHERE deleted = ?", (True,))                    
+            c.execute("SELECT max(id) FROM tweets WHERE deleted = ?", (True,))
         else:
             c.execute("SELECT max(id) FROM tweets")
         res = c.fetchone()[0]
         log.debug("max id is: %d", res)
         return res
-    
+
     def get_destroy_set_keepnum(self, keepnum, deletemax=None):
         """
         Find tweet destroy list, using keepnum method.
@@ -153,7 +157,6 @@ class TweetCache(object):
         if deletemax is not None:
             QUERY += " LIMIT ?"
             PARAMS.append(deletemax)
-            
         c.execute(QUERY, PARAMS)
         result = c.fetchall()
         return result
@@ -187,7 +190,6 @@ class TweetCache(object):
             if deletemax and i+1 >= deletemax:
                 break
         return destroy_set
-
 
     def get_destroy_set_dates(self, date_before, date_after=None, deletemax=None):
         """
@@ -228,7 +230,7 @@ class TweetCache(object):
             if deletemax and i+1 >= deletemax:
                 break
         return destroy_set
-    
+
 def load_tweetcache(args):
     """
     If we already have a cache of tweets, load it.
@@ -241,7 +243,7 @@ def load_tweetcache(args):
 def fetch_all_tweets(tw, args, tweetcache):
     """
     Find tweet IDs so we can delete them.
-    
+
     Twitter's search API makes it really hard to find old tweets.
     So instead, we first search for the oldest tweet we can find,
     and then slowly iterate backwards to find the ID of the last
@@ -259,7 +261,7 @@ def fetch_all_tweets(tw, args, tweetcache):
 
     # Get older tweets
     tweetcache = get_old_tweets(tw, username, args, tweetcache)
-    
+
     # Get newer tweets
     tweetcache = get_new_tweets(tw, username, args, tweetcache)
 
@@ -279,11 +281,11 @@ def get_new_tweets(tw, username, args, tweetcache):
         # usually (always?) be smaller than the latest tweet id.
         known_max_id = tweetcache.get_max_id(undeleted=False)
         log.debug("Getting tweets since %s ...", known_max_id)
-        
+
         tweets = tw.statuses.user_timeline(screen_name=username,
                                            count=args.batchsize,
                                            since_id=known_max_id,
-                                           trim_user=True,                                           
+                                           trim_user=True,
                                            #exclude_replies=True,
                                        )
         log.debug("Fetched %d tweets.", len(tweets))
@@ -328,12 +330,12 @@ def get_old_tweets(tw, username, args, tweetcache):
                 log.debug("Didn't find any new tweets. All done.")
                 break
             known_min_id = min_id
-            
+
             log.debug("Fetching %d tweets before tweet id: %s ...", args.batchsize, known_min_id - 1)
             tweets = tw.statuses.user_timeline(screen_name=username,
                                            count=args.batchsize,
                                            max_id=known_min_id - 1,
-                                           trim_user=True,                                           
+                                           trim_user=True,
                                            #exclude_replies=True,
                                        )
             log.debug("Fetched %d tweets.", len(tweets))
@@ -360,7 +362,7 @@ def get_destroy_set(args):
     # 3. Number of tweets to keep mode
     if args.date_before is not None:
         log.debug("Using date based mode.")
-        destroy_tweetset = tweetcache.get_destroy_set_dates(args.date_before, args.date_after, args.deletemax)        
+        destroy_tweetset = tweetcache.get_destroy_set_dates(args.date_before, args.date_after, args.deletemax)
 
     elif args.beforedays is not None:
         log.debug("Using days before mode.")
@@ -373,7 +375,7 @@ def get_destroy_set(args):
     return destroy_tweetset
 
 def destroy_tweets(tw, args, tweetcache):
-    
+
     #tweetset = sort_tweets(tweetcache)
 
     # Delete tweets older than the number we're going to keep
@@ -382,7 +384,7 @@ def destroy_tweets(tw, args, tweetcache):
     destroy_tweetset = get_destroy_set(args)
 
     log.debug("Need to destroy %d tweets.", len(destroy_tweetset))
-    
+
     for idx, twt in enumerate(destroy_tweetset):
         log.debug("Destroying tweet id %s [%s]: %s", twt['id'], twt['created_at'], twt['content_text'])
         try:
@@ -391,7 +393,7 @@ def destroy_tweets(tw, args, tweetcache):
             if twt['id'] in args.nodelete:
                 log.debug("Not deleting tweet: %d", twt['id'])
                 continue
-            
+
             if not args.dryrun:
                 gone_twt = tw.statuses.destroy(id=twt['id'])
                 tweetcache.mark_deleted(twt['id'])
@@ -411,14 +413,14 @@ def destroy_tweets(tw, args, tweetcache):
                     log.warn("Not authorised to delete tweet: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
                     tweetcache.mark_deleted(twt['id'])
-                    
+
                 elif errors[0]['code'] == 34:
                     log.warn("Page doesn't exist for: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
                     tweetcache.mark_deleted(twt['id'])
                 elif errors[0]['code'] == 63:
                     log.warn("User you retweeted got suspended. Removing cache entry.")
-                    tweetcache.mark_deleted(twt['id'])                    
+                    tweetcache.mark_deleted(twt['id'])
                 else:
                     log.critical("Unhandled response from Twitter for: [%s] %s", twt['id'], twt['content_text'])
                     raise
@@ -430,7 +432,31 @@ def destroy_tweets(tw, args, tweetcache):
         del_sleeptime = 60 / args.deletelimit
         log.debug("sleeping for %s seconds...", del_sleeptime)
         time.sleep(del_sleeptime)
-        
+
+    return tweetcache
+
+def import_twitter_archive(tw, args, tweetcache):
+    """Load tweets into tweetcache from an archive downloaded from Twitter"""
+
+    # Load tweets from the tweet JSON file in the archive
+    log.info("Importing twitter archive from %s", args.importfile)
+
+    # Open the archive zipfile
+    with zipfile.ZipFile(args.importfile) as ark:
+
+        # The datafile provided is a Javascript variable assignment
+        # of a JSON datastructure, which is a little frustrating to parse
+        # Why can't Twitter just have the tweets be in a plain JSON file?
+        with ark.open(TWEET_DATAFILE, 'r') as twdf:
+            log.debug("Importing tweets from archive...")
+            jsdata = twdf.readlines()
+            # Edit the first line to strip out the variable assignment
+            jsdata[0] = jsdata[0][ jsdata[0].index('['): ]
+            tweetset = [ x['tweet'] for x in json.loads(''.join(jsdata)) ]
+
+            # Augment the tweetcache with this data
+            tweetcache.save_tweets(args.userids[0], tweetset)
+
     return tweetcache
 
 def augment_args(args):
@@ -449,7 +475,7 @@ def augment_args(args):
         else:
             args.nodelete = nodelete
         log.debug('args: %s', args.nodelete)
-        
+
     except ConfigParser.NoOptionError:
         log.debug("No such option.")
         pass
@@ -490,7 +516,7 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(description="Delete old tweets",
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument('userids', nargs='+', help="User id")
-    
+
     ap.add_argument('-c', '--config', default='~/.twitrc', help="Config file")
     ap.add_argument('-b', '--batchsize', type=int, default=200, help="Fetch this many tweets per API call (max is Twitter API max, currently 200)")
     ap.add_argument('-k', '--keep', type=int, default=5000, help="How many tweets to keep.")
@@ -501,16 +527,19 @@ if __name__ == '__main__':
     ap.add_argument('-A', '--date-after', help="Delete tweets after this date.", type=valid_date)
     ap.add_argument('--beforedays', type=int, help="Delete tweets from before this many days ago.")
 
+    ap.add_argument('-i', '--importfile', default=None, help="Import tweets from Twitter archive.")
+
     ap.add_argument('--tweetcache', default='~/.tweetcache.db', help="File to store cache of tweet/date IDs")
 
     ap.add_argument('--fetchonly', action='store_true', help="Just run the fetch stage and then exit.")
     ap.add_argument('--nofetch', action='store_true', help="Skip the fetch stage.")
+
     ap.add_argument('--dryrun', action='store_true', help="Don't actually delete tweets, but do populate cache.")
     ap.add_argument('--loglevel', choices=['debug', 'info', 'warning', 'error', 'critical'], help="Set log output level.")
 
     ap.add_argument('--searchlimit', type=int, default=5, help="Max number of searches per minute.")
     ap.add_argument('--deletelimit', type=int, default=60, help="Max number of deletes per minute.")
-    
+
     args = ap.parse_args()
 
     if args.loglevel is not None:
@@ -528,6 +557,15 @@ if __name__ == '__main__':
     tw = authenticate(args)
     tweetcache = load_tweetcache(args)
     log.debug("tweetcache loaded.")
+
+    if args.importfile:
+        # Import tweets from a Twitter archive file you asked for
+        # This reads in the data Twitter sends you when you ask
+        # for an archive of your tweets, and stores it in the local tweetcache.
+        # This is a handy way to bootstrap your archive rather than using the
+        # slow and painful feed traversal mechanism.
+        tweetcache = import_twitter_archive(tw, args, tweetcache)
+
     if not args.nofetch:
         tweetcache = fetch_all_tweets(tw, args, tweetcache)
 
@@ -537,4 +575,4 @@ if __name__ == '__main__':
     if not args.fetchonly:
         tweetcache = destroy_tweets(tw, args, tweetcache)
 
-    log.debug("Done.")    
+    log.debug("Done.")
