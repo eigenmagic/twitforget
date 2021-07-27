@@ -65,17 +65,17 @@ before ```--before-days``` and after ```--after-days```.
 ### Keep specific tweets
 
 You might particularly like certain tweets and would prefer to keep them. No
-problem! Tell twitforget to keep those tweets using the -k flag and providing
+problem! Tell twitforget to keep those tweets using the ```-k``` flag and providing
 the tweet id for the good tweet. You can provide the flag multiple times if you
 have more than one good tweet you'd like to keep.
 
 That can get a bit tedious when you have a lot of good tweets you want to keep,
-so you can also add the tweet ids to your config file with the ```keeplist```
+so you can also add the tweet ids to your config file with the ```keeptweets```
 parameter and twitforget will always know to keep those tweets.
 
 Something like this:
 ```
-keeplist = 825526299879829504
+keeptweets = 825526299879829504
     846940673173540864
     846941755597574145
     869115756755034112
@@ -84,6 +84,31 @@ keeplist = 825526299879829504
 (These are real tweets of mine that I've decided to keep, so you can go check.)
 
 If you make a new, good tweet and decide to keep it, just add it to the list.
+
+## Deleting Likes
+
+You can also delete your likes with the ```likesforget.py``` command.
+
+It's based on ```twitforget.py``` so it functions pretty much the same way, with
+the same flags and approach to things, just adapted to work with likes.
+
+### Getting started
+
+Import your likes archive in the same way you did for your tweets:
+```
+./likesforget.py -i <zipfile> --nofetch --nodelete <your_twitter_handle>
+```
+
+### Delete range
+
+Twitter doesn't provide much detail for likes, so the script doesn't currently
+populate the cache with creation times.
+
+### Keep specific likes
+
+Just as with keeping tweets, you might want to keep certain likes. Use the
+```-k``` flag, or add the id of the tweets you've liked to your config file with
+the ```keeplikes``` parameter and those likes will be kept.
 
 ## Limitations
 

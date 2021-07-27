@@ -6,7 +6,6 @@ import sys
 import os.path
 import argparse
 import ConfigParser
-from itertools import izip_longest
 import arrow
 
 #import csv
@@ -159,7 +158,7 @@ class TweetCache(object):
         """
         Find tweet destroy list, using keepnum method.
 
-        Returns a set of tweets sorted by age, keeping keepnum of the newest ones.
+        Returns a set of tweets sorted by id, keeping keepnum of the newest ones.
         """
         c = self.conn.cursor()
         QUERY = """SELECT * FROM tweets
@@ -353,14 +352,16 @@ def get_old_tweets(tw, username, args, tweetcache):
                                            trim_user=True,
                                            #exclude_replies=True,
                                        )
-            log.debug("Fetched %d tweets.", len(tweets))
-            if tweets == []:
-                log.debug("No more old tweets to fetch.")
-                # Stop fetching
-                fetching = False
-                break
-            else:
-                tweetcache.save_tweets(username, tweets)
+        
+        # Save the tweets we've found so far
+        log.debug("Fetched %d tweets.", len(tweets))
+        if tweets == []:
+            log.debug("No more old tweets to fetch.")
+            # Stop fetching
+            fetching = False
+            break
+        else:
+            tweetcache.save_tweets(username, tweets)
 
         sleeptime = 60 / args.searchlimit
         log.debug("sleeping for %s seconds...", sleeptime)
@@ -384,7 +385,7 @@ def get_destroy_set(args):
         destroy_tweetset = tweetcache.get_destroy_set_beforedays(args.beforedays, args.deletemax)
 
     else:
-        log.debug("Using number to keep mode.")
+        log.debug("Using number to keep mode. Keeping %d.", args.keepnum)
         destroy_tweetset = tweetcache.get_destroy_set_keepnum(args.keepnum, args.deletemax)
 
     return destroy_tweetset
@@ -564,7 +565,7 @@ if __name__ == '__main__':
     # provide --before-date to prevent accidental deletion of all tweets.
     if args.date_after is not None:
         if args.date_before is None:
-            ap.error("Safety feature: Need to provide --before-date as well as --after-date.")
+            ap.error("Safety feature: Need to provide --date-before as well as --date-after.")
 
     args = augment_args(args)
 
