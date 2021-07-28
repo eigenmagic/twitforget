@@ -481,7 +481,7 @@ def augment_args(args):
     cp = ConfigParser.SafeConfigParser()
     cp.read(os.path.expanduser(args.config))
     try:
-        keeplist = cp.get('twitter', 'keeplist')
+        keeplist = cp.get('twitter', 'keeptweets')
         keeplist = [int(x) for x in keeplist.split()]
         log.debug('keeplist: %s', keeplist)
 
