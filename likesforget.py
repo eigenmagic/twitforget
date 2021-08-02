@@ -139,15 +139,20 @@ class TweetCache(object):
         """
         c = self.conn.cursor()
         if undeleted:
-            log.debug("Ignoring likes: %s", ignoreids)
-            # SQLite doesn't support lists for parameters, apparently, so we need to be
-            # careful here lest we introduce a SQL-injection
-            idlist = ','.join([ '%d' % x for x in ignoreids ])
-            log.debug(idlist)
+            query = "SELECT min(id) FROM likes WHERE deleted = False"
 
-            c.execute("SELECT min(id) FROM likes WHERE deleted = ? AND id NOT IN (%s)" % idlist, (False,) )
+            if ignoreids is not None:
+                log.debug("Ignoring likes: %s", ignoreids)
+                # SQLite doesn't support lists for parameters, apparently, so we need to be
+                # careful here lest we introduce a SQL-injection
+                idlist = ','.join([ '%d' % x for x in ignoreids ])
+                log.debug(idlist)
+
+                query += " AND id NOT IN (%s)" % idlist
+            c.execute(query)
         else:
             c.execute("SELECT min(id) FROM likes")
+
         res = c.fetchone()[0]
         log.debug("minimum id is: %d", res)
         return res
