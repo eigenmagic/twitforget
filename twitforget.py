@@ -404,7 +404,7 @@ def destroy_tweets(tw, args, tweetcache):
         try:
 
             # Don't delete certain specific tweets
-            if twt['id'] in args.keeplist:
+            if args.keeplist is not None and twt['id'] in args.keeplist:
                 log.debug("Not deleting tweet: %d", twt['id'])
                 continue
 

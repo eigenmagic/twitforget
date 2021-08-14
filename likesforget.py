@@ -432,7 +432,7 @@ def destroy_likes(tw, args, tweetcache):
         try:
 
             # Don't delete certain specific likes
-            if item['id'] in args.keeplist:
+            if args.keeplist is not None and item['id'] in args.keeplist:
                 log.debug("Not deleting like: %d", item['id'])
                 continue
 
