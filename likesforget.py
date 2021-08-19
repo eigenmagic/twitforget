@@ -437,10 +437,11 @@ def destroy_likes(tw, args, tweetcache):
                 continue
 
             if not args.dryrun:
-                gone_item = tw.favorites.destroy(id=item['id'])
+                gone_item = tw.favorites.destroy(_id=item['id'])
                 tweetcache.mark_deleted(item['id'])
                 log.debug("Gone like %s: %s", gone_item['id'], gone_item['text'])
             else:
+                # Try fetching the item we would delete
                 log.debug("Like not actually deleted.")
 
         except twitter.api.TwitterHTTPError, e:
