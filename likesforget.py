@@ -82,7 +82,7 @@ class TweetCache(object):
         # Don't actually delete like, just mark it as deleted
         # This is so we can maintain a local archive, but know that
         # the public state of the like is deleted.
-        log.debug("Marking like id %id as deleted in cache...", tweetid)
+        log.debug("Marking like id %s as deleted in cache...", tweetid)
         c = self.conn.cursor()
         c.execute("UPDATE likes SET deleted = ? WHERE id = ?", (True, tweetid,))
         self.conn.commit()
@@ -433,7 +433,7 @@ def destroy_likes(tw, args, tweetcache):
 
             # Don't delete certain specific likes
             if args.keeplist is not None and item['id'] in args.keeplist:
-                log.debug("Not deleting like: %d", item['id'])
+                log.debug("Not deleting like: %s", item['id'])
                 continue
 
             if not args.dryrun:
