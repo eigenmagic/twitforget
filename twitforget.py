@@ -593,7 +593,7 @@ if __name__ == '__main__':
     ap.add_argument('--searchlimit', type=int, default=5, help="Max number of searches per minute.")
     ap.add_argument('--deletelimit', type=int, default=60, help="Max number of deletes per minute.")
 
-    ap.add_argument('--migrate', action='store_true', dest='migrate_datetimes', help="Don't actually delete tweets, but do populate cache.")
+    ap.add_argument('--migrate', action='store_true', dest='migrate_datetimes', help="Migrate datetimes in tweetcache to ISO-8601 format.")
 
 
     args = ap.parse_args()

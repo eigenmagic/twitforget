@@ -1,31 +1,27 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Delete old likes
 # Copyright Justin Warren <justin@eigenmagic.com>
 
-import sys
 import os.path
 import argparse
-import ConfigParser
+import configparser
 from more_itertools import chunked
 import arrow
 
-#import csv
 import zipfile
 import json
 
-import twitter
+import tweepy
 import time
 
 import sqlite3
 
 import logging
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('likesforget')
 
-import pprint
-
-SQLDATE_FMT = 'ddd MMM DD hh:mm:ss Z YYYY'
+OLD_SQLDATE_FMT = 'ddd MMM DD hh:mm:ss Z YYYY'
 
 LIKES_DATAFILE = 'data/like.js'
 
@@ -93,11 +89,10 @@ class TweetCache(object):
 
         valset = []
         for item in likes:
-
             # This format is when loading from archive
-            if 'fullText' in item:
+            if hasattr(item, 'fullText'):
                 # Sometimes a like is for a tweet that's missing
-                if 'created_at' not in item:
+                if not hasattr(item, 'created_at'):
                     valset.append(
                         (item['tweetId'],
                         username,
@@ -107,21 +102,27 @@ class TweetCache(object):
                         )
                     )
                 else:
+                    # Use Python to format the date string for SQLite to use
+                    created_at = str(arrow.get(item.created_at))
                     valset.append(
                         (item['tweetId'],
                         username,
-                        item['created_at'],
+                        created_at,
                         item['fullText'],
                         False,
                         )
                     )
             # This format returned by the Twitter API
             else:
+                # Use Python to format the date string for SQLite to use
+
+                created_at = str(arrow.get(item.created_at))
+
                 valset.append(
-                    (item['id'],
+                    (item.id,
                     username,
-                    item['created_at'],
-                    item['text'],
+                    created_at,
+                    item.text,
                     False,
                     )
                 )
@@ -216,7 +217,8 @@ class TweetCache(object):
         beforedate = arrow.now().shift(days=-beforedays)
         destroy_set = []
         for i, row in enumerate(result):
-            if arrow.get(row['created_at'], SQLDATE_FMT) < beforedate:
+            if arrow.get(row['created_at']) < beforedate:
+            # if arrow.get(row['created_at'], SQLDATE_FMT) < beforedate:
                 destroy_set.append(row)
             # enumerate() starts at 0
             if deletemax and i+1 >= deletemax:
@@ -249,7 +251,8 @@ class TweetCache(object):
         # date_before and date_after
         destroy_set = []
         for i, row in enumerate(result):
-            tweet_date = arrow.get(row['created_at'], SQLDATE_FMT)
+            # tweet_date = arrow.get(row['created_at'], SQLDATE_FMT)
+            tweet_date = arrow.get(row['created_at'])
 
             if tweet_date < date_before:
                 # Also check date_after if it's set
@@ -288,6 +291,33 @@ class TweetCache(object):
         result = c.fetchall()
         return result
 
+    def migrate_datetimes(self):
+        """ Migrate all datetimes from old format to ISO-8601 format
+        """
+        c = self.conn.cursor()
+        QUERY = """SELECT * FROM likes
+        WHERE
+            created_at LIKE '%+0000 2%'
+        ORDER BY id ASC
+        """
+        PARAMS = []
+
+        c.execute(QUERY, PARAMS)
+        result = c.fetchall()
+
+        UPDATE_QUERY = """UPDATE likes
+        SET created_at = ?
+        WHERE id = ?
+        """
+
+        for row in result:
+            orig_date = arrow.get(row['created_at'], OLD_SQLDATE_FMT)
+
+            log.debug("Original date is: %s", orig_date)
+            log.debug("Updating status %s", row['id'])
+            c.execute(UPDATE_QUERY, (str(orig_date), row['id']))
+        self.conn.commit()
+
 def load_tweetcache(args):
     """
     If we already have a cache of likes, load it.
@@ -324,11 +354,11 @@ def get_new_likes(tw, username, args, tweetcache):
         known_max_id = tweetcache.get_max_id(undeleted=False)
         log.debug("Getting likes since %s ...", known_max_id)
 
-        likes = tw.favorites.list(screen_name=username,
-                                           count=args.batchsize,
-                                           since_id=known_max_id,
-                                           include_entities=False,
-                                       )
+        likes = tw.get_favorites(screen_name=username,
+                                    count=args.batchsize,
+                                    since_id=known_max_id,
+                                    include_entities=False,
+                                )
         log.debug("Fetched %d likes.", len(likes))
         if likes == []:
             log.debug("No more recent likes to fetch.")
@@ -354,9 +384,9 @@ def get_old_likes(tw, username, args, tweetcache):
 
         if len(tweetcache) == 0:
             log.debug("Fetching first set of %d likes...", args.batchsize)
-            likes = tw.favorites.list(screen_name=username,
-                                        count=args.batchsize,
-                                        include_entities=False,
+            likes = tw.get_favorites(screen_name=username,
+                                    count=args.batchsize,
+                                    include_entities=False,
             )
         else:
             # Keeping a cache of both deleted and undeleted likes creates issues.
@@ -372,11 +402,11 @@ def get_old_likes(tw, username, args, tweetcache):
             known_min_id = min_id
 
             log.debug("Fetching %d likes before tweet id: %s ...", args.batchsize, known_min_id - 1)
-            likes = tw.favorites.list(screen_name=username,
-                                        count=args.batchsize,
-                                        max_id=known_min_id - 1,
-                                        include_entities=False,
-                                       )
+            likes = tw.get_favorites(screen_name=username,
+                                    count=args.batchsize,
+                                    max_id=known_min_id - 1,
+                                    include_entities=False,
+                                    )
         log.debug("Fetched %d likes.", len(likes))
         if likes == []:
             log.debug("No more old likes to fetch.")
@@ -437,14 +467,14 @@ def destroy_likes(tw, args, tweetcache):
                 continue
 
             if not args.dryrun:
-                gone_item = tw.favorites.destroy(_id=item['id'])
+                gone_item = tw.destroy_favorite(item['id'])
                 tweetcache.mark_deleted(item['id'])
                 log.debug("Gone like %s: %s", gone_item['id'], gone_item['text'])
             else:
                 # Try fetching the item we would delete
                 log.debug("Like not actually deleted.")
 
-        except twitter.api.TwitterHTTPError, e:
+        except twitter.api.TwitterHTTPError as e:
             log.debug("Response: %s", e.response_data)
             errors = e.response_data['errors']
             log.debug("errors: %s", errors)
@@ -522,7 +552,7 @@ def decorate_with_tweetdate(tw, args, tweetcache, likeset):
         likedict = {x['tweetId']: x for x in likebatch}
 
         tweet_ids = ','.join([x['tweetId'] for x in likebatch])
-        result = tw.statuses.lookup(_id=tweet_ids)
+        result = tw.lookup_statuses(tweet_ids)
 
         for res in result:
             likedict[res['id_str']]['created_at'] = res['created_at']
@@ -540,7 +570,7 @@ def decorate_with_tweetdate(tw, args, tweetcache, likeset):
 
 def augment_args(args):
     """Augment commandline arguments with config file parameters"""
-    cp = ConfigParser.SafeConfigParser()
+    cp = configparser.ConfigParser()
     cp.read(os.path.expanduser(args.config))
     try:
         keeplist = cp.get('twitter', 'keeplikes')
@@ -553,7 +583,7 @@ def augment_args(args):
             args.keeplist = keeplist
         log.debug('args: %s', args.keeplist)
 
-    except ConfigParser.NoOptionError:
+    except configparser.NoOptionError:
         log.debug("No such option.")
         pass
 
@@ -565,18 +595,21 @@ def authenticate(args):
     Twitter() object to use for API calls
     """
     # import the config file
-    cp = ConfigParser.SafeConfigParser()
+    cp = configparser.ConfigParser()
     cp.read(os.path.expanduser(args.config))
 
-    token = cp.get('twitter', 'token')
-    token_key = cp.get('twitter', 'token_key')
-    con_secret = cp.get('twitter', 'con_secret')
-    con_secret_key = cp.get('twitter', 'con_secret_key')
+    access_token = cp.get('twitter', 'access_token')
+    access_token_secret = cp.get('twitter', 'access_token_secret')
+    consumer_secret = cp.get('twitter', 'consumer_secret')
+    consumer_key = cp.get('twitter', 'consumer_key')
 
-    tw = twitter.Twitter(auth=twitter.OAuth(token,
-                                            token_key,
-                                            con_secret,
-                                            con_secret_key))
+    auth = tweepy.OAuth1UserHandler(
+        consumer_key, consumer_secret,
+        access_token, access_token_secret
+        )
+
+    tw = tweepy.API(auth)
+
     return tw
 
 def valid_date(s):
@@ -618,6 +651,8 @@ if __name__ == '__main__':
     ap.add_argument('--searchlimit', type=int, default=5, help="Max number of searches per minute.")
     ap.add_argument('--deletelimit', type=int, default=60, help="Max number of deletes per minute.")
 
+    ap.add_argument('--migrate', action='store_true', dest='migrate_datetimes', help="Migrate datetimes in tweetcache to ISO-8601 format.")
+
     args = ap.parse_args()
 
     if args.loglevel is not None:
@@ -632,9 +667,14 @@ if __name__ == '__main__':
 
     args = augment_args(args)
 
-    tw = authenticate(args)
     tweetcache = load_tweetcache(args)
     log.debug("tweetcache loaded.")
+
+    if args.migrate_datetimes:
+        log.info('Migrating old dates...')
+        tweetcache.migrate_datetimes()
+
+    tw = authenticate(args)
 
     if args.importfile:
         # Import likes from a Twitter archive file you asked for
