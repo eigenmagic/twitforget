@@ -1,18 +1,20 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Delete old tweets
 # Copyright Justin Warren <justin@eigenmagic.com>
 
+import pdb
 import sys
+
 import os.path
 import argparse
-import ConfigParser
+import configparser
 import arrow
 
 #import csv
 import zipfile
 import json
 
-import twitter
+import tweepy
 import time
 
 import sqlite3
@@ -22,7 +24,7 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('twitforget')
 
-SQLDATE_FMT = 'ddd MMM DD hh:mm:ss Z YYYY'
+OLD_SQLDATE_FMT = 'ddd MMM DD hh:mm:ss Z YYYY'
 
 TWEET_DATAFILE = 'data/tweet.js'
 
@@ -95,21 +97,24 @@ class TweetCache(object):
 
         valset = []
         for twt in tweets:
-            if 'full_text' in twt:
+            # Use Python to format the date string for SQLite to use
+            created_at = str(arrow.get(twt.created_at))
+
+            if hasattr(twt, 'full_text'):
                 valset.append(
-                    (twt['id'],
+                    (twt.id,
                     username,
-                    twt['created_at'],
-                    twt['full_text'],
+                    created_at,
+                    twt.full_text,
                     False,
                     )
                 )
             else:
                 valset.append(
-                    (twt['id'],
+                    (twt.id,
                     username,
-                    twt['created_at'],
-                    twt['text'],
+                    created_at,
+                    twt.text,
                     False,
                     )
                 )
@@ -198,7 +203,9 @@ class TweetCache(object):
         beforedate = arrow.now().shift(days=-beforedays)
         destroy_set = []
         for i, row in enumerate(result):
-            if arrow.get(row['created_at'], SQLDATE_FMT) < beforedate:
+            # log.debug('Checking date: %s', row['created_at'])
+            if arrow.get(row['created_at']) < beforedate:
+            # if arrow.get(row['created_at'], SQLDATE_FMT) < beforedate:
                 destroy_set.append(row)
             # enumerate() starts at 0
             if deletemax and i+1 >= deletemax:
@@ -230,7 +237,8 @@ class TweetCache(object):
         # date_before and date_after
         destroy_set = []
         for i, row in enumerate(result):
-            tweet_date = arrow.get(row['created_at'], SQLDATE_FMT)
+            # tweet_date = arrow.get(row['created_at'], SQLDATE_FMT)
+            tweet_date = arrow.get(row['created_at'])
 
             if tweet_date < date_before:
                 # Also check date_after if it's set
@@ -244,6 +252,33 @@ class TweetCache(object):
             if deletemax and i+1 >= deletemax:
                 break
         return destroy_set
+
+    def migrate_datetimes(self):
+        """ Migrate all datetimes from old format to ISO-8601 format
+        """
+        c = self.conn.cursor()
+        QUERY = """SELECT * FROM tweets
+        WHERE
+            created_at LIKE '%+0000 2%'
+        ORDER BY id ASC
+        """
+        PARAMS = []
+
+        c.execute(QUERY, PARAMS)
+        result = c.fetchall()
+
+        UPDATE_QUERY = """UPDATE tweets
+        SET created_at = ?
+        WHERE id = ?
+        """
+
+        for row in result:
+            orig_date = arrow.get(row['created_at'], OLD_SQLDATE_FMT)
+
+            log.debug("Original date is: %s", orig_date)
+            log.debug("Updating status %s", row['id'])
+            c.execute(UPDATE_QUERY, (str(orig_date), row['id']))
+        self.conn.commit()
 
 def load_tweetcache(args):
     """
@@ -296,7 +331,7 @@ def get_new_tweets(tw, username, args, tweetcache):
         known_max_id = tweetcache.get_max_id(undeleted=False)
         log.debug("Getting tweets since %s ...", known_max_id)
 
-        tweets = tw.statuses.user_timeline(screen_name=username,
+        tweets = tw.user_timeline(screen_name=username,
                                            count=args.batchsize,
                                            since_id=known_max_id,
                                            trim_user=True,
@@ -327,10 +362,10 @@ def get_old_tweets(tw, username, args, tweetcache):
 
         if len(tweetcache) == 0:
             log.debug("Fetching first set of %d tweets...", args.batchsize)
-            tweets = tw.statuses.user_timeline(screen_name=username,
-                                               count=args.batchsize,
-                                               trim_user=True,
-                                               #exclude_replies=True,
+            tweets = tw.user_timeline(screen_name=username,
+                                        count=args.batchsize,
+                                        trim_user=True,
+                                        #exclude_replies=True,
             )
         else:
             # Keeping a cache of both deleted and undeleted tweets creates issues.
@@ -346,12 +381,12 @@ def get_old_tweets(tw, username, args, tweetcache):
             known_min_id = min_id
 
             log.debug("Fetching %d tweets before tweet id: %s ...", args.batchsize, known_min_id - 1)
-            tweets = tw.statuses.user_timeline(screen_name=username,
-                                           count=args.batchsize,
-                                           max_id=known_min_id - 1,
-                                           trim_user=True,
-                                           #exclude_replies=True,
-                                       )
+            tweets = tw.user_timeline(screen_name=username,
+                                        count=args.batchsize,
+                                        max_id=known_min_id - 1,
+                                        trim_user=True,
+                                        #exclude_replies=True,
+                                    )
         
         # Save the tweets we've found so far
         log.debug("Fetched %d tweets.", len(tweets))
@@ -409,32 +444,32 @@ def destroy_tweets(tw, args, tweetcache):
                 continue
 
             if not args.dryrun:
-                gone_twt = tw.statuses.destroy(id=twt['id'])
+                gone_twt = tw.destroy_status(id=twt['id'])
                 tweetcache.mark_deleted(twt['id'])
-                log.debug("Gone tweet %s: %s", gone_twt['id'], gone_twt['text'])
+                log.debug("Gone tweet %s: %s", gone_twt.id, gone_twt.text)
             else:
                 log.debug("Tweet not actually deleted.")
 
-        except twitter.api.TwitterHTTPError, e:
-            log.debug("Response: %s", e.response_data)
-            errors = e.response_data['errors']
+        except (tweepy.errors.HTTPException) as e:
+            log.debug("Response: %s", e.response)
+            errors = e.api_codes
             log.debug("errors: %s", errors)
             if len(errors) == 1:
-                if errors[0]['code'] == 144:
+                if errors[0] == 144:
                     log.warn("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
                     tweetcache.mark_deleted(twt['id'])
                 
-                elif errors[0]['code'] == 179:
+                elif errors[0] == 179:
                     log.warn("Not authorised to delete tweet: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
                     tweetcache.mark_deleted(twt['id'])
 
-                elif errors[0]['code'] == 34:
+                elif errors[0] == 34:
                     log.warn("Page doesn't exist for: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
                     tweetcache.mark_deleted(twt['id'])
 
-                elif errors[0]['code'] == 63:
+                elif errors[0] == 63:
                     log.warn("User you retweeted got suspended. Removing cache entry.")
                     tweetcache.mark_deleted(twt['id'])
 
@@ -478,7 +513,7 @@ def import_twitter_archive(tw, args, tweetcache):
 
 def augment_args(args):
     """Augment commandline arguments with config file parameters"""
-    cp = ConfigParser.SafeConfigParser()
+    cp = configparser.ConfigParser()
     cp.read(os.path.expanduser(args.config))
     try:
         keeplist = cp.get('twitter', 'keeptweets')
@@ -491,7 +526,7 @@ def augment_args(args):
             args.keeplist = keeplist
         log.debug('args: %s', args.keeplist)
 
-    except ConfigParser.NoOptionError:
+    except configparser.NoOptionError:
         log.debug("No such option.")
         pass
 
@@ -503,18 +538,21 @@ def authenticate(args):
     Twitter() object to use for API calls
     """
     # import the config file
-    cp = ConfigParser.SafeConfigParser()
+    cp = configparser.ConfigParser()
     cp.read(os.path.expanduser(args.config))
 
-    token = cp.get('twitter', 'token')
-    token_key = cp.get('twitter', 'token_key')
-    con_secret = cp.get('twitter', 'con_secret')
-    con_secret_key = cp.get('twitter', 'con_secret_key')
+    access_token = cp.get('twitter', 'access_token')
+    access_token_secret = cp.get('twitter', 'access_token_secret')
+    consumer_secret = cp.get('twitter', 'consumer_secret')
+    consumer_key = cp.get('twitter', 'consumer_key')
 
-    tw = twitter.Twitter(auth=twitter.OAuth(token,
-                                            token_key,
-                                            con_secret,
-                                            con_secret_key))
+    auth = tweepy.OAuth1UserHandler(
+        consumer_key, consumer_secret,
+        access_token, access_token_secret
+        )
+
+    tw = tweepy.API(auth)
+
     return tw
 
 def valid_date(s):
@@ -555,6 +593,9 @@ if __name__ == '__main__':
     ap.add_argument('--searchlimit', type=int, default=5, help="Max number of searches per minute.")
     ap.add_argument('--deletelimit', type=int, default=60, help="Max number of deletes per minute.")
 
+    ap.add_argument('--migrate', action='store_true', dest='migrate_datetimes', help="Don't actually delete tweets, but do populate cache.")
+
+
     args = ap.parse_args()
 
     if args.loglevel is not None:
@@ -569,9 +610,14 @@ if __name__ == '__main__':
 
     args = augment_args(args)
 
-    tw = authenticate(args)
     tweetcache = load_tweetcache(args)
     log.debug("tweetcache loaded.")
+
+    if args.migrate_datetimes:
+        log.info('Migrating old dates...')
+        tweetcache.migrate_datetimes()
+
+    tw = authenticate(args)
 
     if args.importfile:
         # Import tweets from a Twitter archive file you asked for
