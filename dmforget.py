@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-# Delete old likes
+# Delete old dms
 # Copyright Justin Warren <justin@eigenmagic.com>
 
+import pdb
+import sys
 import os.path
 import argparse
 import configparser
@@ -19,11 +21,13 @@ import sqlite3
 import logging
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s')
-log = logging.getLogger('likesforget')
+log = logging.getLogger('dmsforget')
+
+import pprint
 
 OLD_SQLDATE_FMT = 'ddd MMM DD hh:mm:ss Z YYYY'
 
-LIKES_DATAFILE = 'data/like.js'
+DMS_DATAFILE = 'data/direct-messages.js'
 
 class TweetCache(object):
     """
@@ -38,150 +42,126 @@ class TweetCache(object):
 
         c = self.conn.cursor()
         # Does the schema exist? If not, create it.
-        c.execute("""SELECT name FROM sqlite_master WHERE type='table' AND name='likes'""")
+        c.execute("""SELECT name FROM sqlite_master WHERE type='table' AND name='dms'""")
         result = c.fetchone()
         if result is None:
             self.create_schema()
 
     def create_schema(self):
         c = self.conn.cursor()
-        c.execute("""CREATE TABLE likes
-        (id integer UNIQUE, screen_name text, created_at datetime, content_text text, deleted bool)""")
+        c.execute("""CREATE TABLE dms
+        (id integer UNIQUE,
+            screen_name text,
+            created_at datetime,
+            conversation_id text,
+            sender_id integer,
+            recipient_id integer,
+            content_text text,
+            deleted bool)""")
         self.conn.commit()
 
     def __len__(self):
         c = self.conn.cursor()
-        c.execute("SELECT count(*) FROM likes")
+        c.execute("SELECT count(*) FROM dms")
         result = c.fetchone()[0]
-        log.debug("There are %d likes in the cache.", result)
+        log.debug("There are %d dms in the cache.", result)
         return result
 
     def get_deleted_count(self):
         """
-        Find out how many likes in the cache are deleted.
+        Find out how many dms in the cache are deleted.
         """
         c = self.conn.cursor()
-        c.execute("SELECT count(*) FROM likes WHERE deleted = ?", (True,))
+        c.execute("SELECT count(*) FROM dms WHERE deleted = ?", (True,))
         result = c.fetchone()[0]
-        log.debug("There are %d deleted likes in the cache.", result)
+        log.debug("There are %d deleted dms in the cache.", result)
         return result
 
     def __delitem__(self, tweetid):
-        log.debug("Deleting like id %d from cache...", tweetid)
+        log.debug("Deleting dm id %d from cache...", tweetid)
 
         c = self.conn.cursor()
-        c.execute("DELETE FROM likes WHERE id = ?", (tweetid,))
+        c.execute("DELETE FROM dms WHERE id = ?", (tweetid,))
         self.conn.commit()
         return
 
     def mark_deleted(self, tweetid):
-        # Don't actually delete like, just mark it as deleted
+        # Don't actually delete dm, just mark it as deleted
         # This is so we can maintain a local archive, but know that
-        # the public state of the like is deleted.
-        log.debug("Marking like id %s as deleted in cache...", tweetid)
+        # the public state of the dm is deleted.
+        log.debug("Marking dm id %id as deleted in cache...", tweetid)
         c = self.conn.cursor()
-        c.execute("UPDATE likes SET deleted = ? WHERE id = ?", (True, tweetid,))
+        c.execute("UPDATE dms SET deleted = ? WHERE id = ?", (True, tweetid,))
         self.conn.commit()
         return
 
-    def save_likes(self, username, likes):
+    def save_dms(self, username, dms):
         c = self.conn.cursor()
 
         valset = []
-        for item in likes:
-            # This format is when loading from archive
-            if hasattr(item, 'fullText'):
-                # Sometimes a like is for a tweet that's missing
-                if not hasattr(item, 'created_at'):
-                    valset.append(
-                        (item['tweetId'],
-                        username,
-                        None,
-                        item['fullText'],
-                        False,
-                        )
-                    )
-                else:
-                    # Use Python to format the date string for SQLite to use
-                    created_at = str(arrow.get(item.created_at))
-                    valset.append(
-                        (item['tweetId'],
-                        username,
-                        created_at,
-                        item['fullText'],
-                        False,
-                        )
-                    )
-            # This format returned by the Twitter API
-            else:
-                # Use Python to format the date string for SQLite to use
+        for item in dms:
+            # created_at = str(arrow.get(item.created_at))
 
-                created_at = str(arrow.get(item.created_at))
-
-                valset.append(
-                    (item.id,
-                    username,
-                    created_at,
-                    item.text,
-                    False,
-                    )
+            valset.append(
+                (item['id'],
+                username,
+                item['createdAt'],
+                item['senderId'],
+                item['recipientId'],
+                item['text'],
+                False,
                 )
-
-        c.executemany("""INSERT OR IGNORE INTO likes
-            (id, screen_name, created_at, content_text, deleted)
-            VALUES (?, ?, ?, ?, ?)""", valset)
+            )
+        c.executemany("""INSERT OR IGNORE INTO dms
+            (id, screen_name, created_at, sender_id, recipient_id, content_text, deleted)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""", valset)
         self.conn.commit()
-        log.debug("Saved %d likes into database.", len(valset))
+        log.debug("Saved %d dms into database.", len(valset))
 
     def get_min_id(self, undeleted=False, ignoreids=None):
         """
-        Get the minimum like id in the cache.
-        Ignore deleted likes if undeleted is True.
+        Get the minimum dm id in the cache.
+        Ignore deleted dms if undeleted is True.
         """
         c = self.conn.cursor()
         if undeleted:
-            query = "SELECT min(id) FROM likes WHERE deleted = False"
+            log.debug("Ignoring dms: %s", ignoreids)
+            # SQLite doesn't support lists for parameters, apparently, so we need to be
+            # careful here lest we introduce a SQL-injection
+            idlist = ','.join([ '%d' % x for x in ignoreids ])
+            log.debug(idlist)
 
-            if ignoreids is not None:
-                log.debug("Ignoring likes: %s", ignoreids)
-                # SQLite doesn't support lists for parameters, apparently, so we need to be
-                # careful here lest we introduce a SQL-injection
-                idlist = ','.join([ '%d' % x for x in ignoreids ])
-                log.debug(idlist)
-
-                query += " AND id NOT IN (%s)" % idlist
-            c.execute(query)
+            c.execute("SELECT min(id) FROM dms WHERE deleted = ? AND id NOT IN (%s)" % idlist, (False,) )
         else:
-            c.execute("SELECT min(id) FROM likes")
-
+            c.execute("SELECT min(id) FROM dms")
         res = c.fetchone()[0]
         log.debug("minimum id is: %d", res)
         return res
 
     def get_max_id(self, undeleted=False):
         """
-        Get the maximum like id in the cache.
+        Get the maximum dm id in the cache.
         Ignore deleted messages if undeleted is True.
         """
         c = self.conn.cursor()
         if undeleted:
-            c.execute("SELECT max(id) FROM likes WHERE deleted = ?", (True,))
+            c.execute("SELECT max(id) FROM dms WHERE deleted = ?", (True,))
         else:
-            c.execute("SELECT max(id) FROM likes")
+            c.execute("SELECT max(id) FROM dms")
         res = c.fetchone()[0]
         log.debug("max id is: %d", res)
         return res
 
     def get_destroy_set_keepnum(self, keepnum, deletemax=None):
         """
-        Find like destroy list, using keepnum method.
+        Find dm destroy list, using keepnum method.
 
-        Returns a set of likes sorted by id, keeping keepnum of the newest ones.
+        Returns a set of dms sorted by id, keeping keepnum of the newest ones.
         """
         c = self.conn.cursor()
-        QUERY = """SELECT * FROM likes
+        QUERY = """SELECT * FROM dms
         WHERE id NOT IN
-        (SELECT id FROM likes ORDER BY id DESC LIMIT ?)
+        (SELECT id FROM dms ORDER BY id DESC LIMIT ?)
         AND deleted IS NOT ?
         ORDER BY id ASC
         """
@@ -195,14 +175,14 @@ class TweetCache(object):
 
     def get_destroy_set_beforedays(self, beforedays, deletemax=None):
         """
-        Find likes destroy list, using beforedays method.
+        Find dms destroy list, using beforedays method.
 
-        Returns a set of up to deletenum likes sorted by age, from at least beforedays ago.
+        Returns a set of up to deletenum dms sorted by age, from at least beforedays ago.
         """
         # Because SQLite doesn't do dates properly, we will
         # use Python's date handing instead.
         c = self.conn.cursor()
-        QUERY = """SELECT * FROM likes
+        QUERY = """SELECT * FROM dms
         WHERE
           deleted IS NOT ?
           AND created_at IS NOT NULL
@@ -213,12 +193,16 @@ class TweetCache(object):
         c.execute(QUERY, PARAMS)
         result = c.fetchall()
 
-        # Find up to deletenum likes with dates before 'beforedays' days ago
+        # Find up to deletenum dms with dates before 'beforedays' days ago
         beforedate = arrow.now().shift(days=-beforedays)
         destroy_set = []
         for i, row in enumerate(result):
-            if arrow.get(row['created_at']) < beforedate:
-            # if arrow.get(row['created_at'], SQLDATE_FMT) < beforedate:
+            try:
+                tweet_date = arrow.get(row['created_at'], OLD_SQLDATE_FMT)
+            except arrow.parser.ParserError:
+                tweet_date = arrow.get(row['created_at'])
+
+            if tweet_date < beforedate:
                 destroy_set.append(row)
             # enumerate() starts at 0
             if deletemax and i+1 >= deletemax:
@@ -229,14 +213,14 @@ class TweetCache(object):
         """
         Find tweet destroy list, using dates method.
 
-        Returns a set of up to deletenum likes sorted by age,
+        Returns a set of up to deletenum dms sorted by age,
         with created_at date of earlier than date_before
         but later than date_after (if set).
         """
         # Because SQLite doesn't do dates properly, we will
         # use Python's date handing instead.
         c = self.conn.cursor()
-        QUERY = """SELECT * FROM likes
+        QUERY = """SELECT * FROM dms
         WHERE
           deleted IS NOT ?
           AND created_at IS NOT NULL
@@ -247,12 +231,14 @@ class TweetCache(object):
         c.execute(QUERY, PARAMS)
         result = c.fetchall()
 
-        # Find up to deletenum likes with dates between
+        # Find up to deletenum dms with dates between
         # date_before and date_after
         destroy_set = []
         for i, row in enumerate(result):
-            # tweet_date = arrow.get(row['created_at'], SQLDATE_FMT)
-            tweet_date = arrow.get(row['created_at'])
+            try:
+                tweet_date = arrow.get(row['created_at'], OLD_SQLDATE_FMT)
+            except arrow.parser.ParserError:
+                tweet_date = arrow.get(row['created_at'])
 
             if tweet_date < date_before:
                 # Also check date_after if it's set
@@ -269,16 +255,16 @@ class TweetCache(object):
 
     def get_destroy_nodate(self, keepnum, deletemax=None):
         """
-        Find like destroy list, using missing date.
+        Find dm destroy list, using missing date.
 
-        If we can't get the date for a tweet, such as likes we liked
+        If we can't get the date for a tweet, such as dms we dmd
         before the user blocked us, or got banned, or for some other
         reason the tweet is now invisible to us, we can't augment the
-        Twitter archive info with the date of the tweet we liked. But
-        we might still want to delete these likes.
+        Twitter archive info with the date of the tweet we dmd. But
+        we might still want to delete these dms.
         """
         c = self.conn.cursor()
-        QUERY = """SELECT * FROM likes
+        QUERY = """SELECT * FROM dms
         WHERE created_at IS NULL
         AND deleted IS NOT ?
         ORDER BY id ASC
@@ -295,7 +281,7 @@ class TweetCache(object):
         """ Migrate all datetimes from old format to ISO-8601 format
         """
         c = self.conn.cursor()
-        QUERY = """SELECT * FROM likes
+        QUERY = """SELECT * FROM dms
         WHERE
             created_at LIKE '%+0000 2%'
         ORDER BY id ASC
@@ -305,7 +291,7 @@ class TweetCache(object):
         c.execute(QUERY, PARAMS)
         result = c.fetchall()
 
-        UPDATE_QUERY = """UPDATE likes
+        UPDATE_QUERY = """UPDATE dms
         SET created_at = ?
         WHERE id = ?
         """
@@ -316,121 +302,91 @@ class TweetCache(object):
             log.debug("Original date is: %s", orig_date)
             log.debug("Updating status %s", row['id'])
             c.execute(UPDATE_QUERY, (str(orig_date), row['id']))
-        self.conn.commit()
+        self.conn.commit()    
 
 def load_tweetcache(args):
     """
-    If we already have a cache of likes, load it.
+    If we already have a cache of dms, load it.
 
     Passes an empty dictionary if the cache doesn't exist.
     """
     tweetcache = TweetCache(os.path.expanduser(args.tweetcache))
     return tweetcache
 
-def fetch_all_likes(tw, args, tweetcache):
-    """Find likes so we can delete them."""
+def fetch_all_dms(tw, args, tweetcache):
+    """Find dms so we can delete them."""
     username = args.userids[0]
 
-    # Get older likes
-    tweetcache = get_old_likes(tw, username, args, tweetcache)
-
-    # Get newer likes
-    tweetcache = get_new_likes(tw, username, args, tweetcache)
+    # Get recent dms
+    tweetcache = get_recent_dms(tw, username, args, tweetcache)
 
     return tweetcache
 
-def get_new_likes(tw, username, args, tweetcache):
+def get_recent_dms(tw, username, args, tweetcache):
     """
-    Get likes that are newer than what's in the cache.
-    """
-    fetching = True
-    log.debug("Fetching new likes...")
-    while(fetching):
-        # Get latest like id
-        # We want to include likes marked as deleted, because they
-        # are in the cache and will affect the max id possible.
-        # Because we delete old likes, the oldest deleted id will
-        # usually (always?) be smaller than the latest tweet id.
-        known_max_id = tweetcache.get_max_id(undeleted=False)
-        log.debug("Getting likes since %s ...", known_max_id)
-
-        likes = tw.get_favorites(screen_name=username,
-                                    count=args.batchsize,
-                                    since_id=known_max_id,
-                                    include_entities=False,
-                                )
-        log.debug("Fetched %d likes.", len(likes))
-        if likes == []:
-            log.debug("No more recent likes to fetch.")
-            # Stop fetching
-            fetching = False
-            break
-        else:
-            tweetcache.save_likes(username, likes)
-
-        sleeptime = 60 / args.searchlimit
-        log.debug("sleeping for %s seconds...", sleeptime)
-        time.sleep(sleeptime)
-
-    return tweetcache
-
-def get_old_likes(tw, username, args, tweetcache):
-    """
-    Get likes that are older than what's in the cache.
+    Get dms that are newer than what's in the cache.
     """
     fetching = True
-    known_min_id = None
+    log.debug("Fetching new dms...")
+    next_cursor = None
     while(fetching):
-
-        if len(tweetcache) == 0:
-            log.debug("Fetching first set of %d likes...", args.batchsize)
-            likes = tw.get_favorites(screen_name=username,
-                                    count=args.batchsize,
-                                    include_entities=False,
+        # Twitter only returns DMs from the last 30 days
+        # sorted in reverse chronological order
+        # Fetch with a cursor, if we need to
+        if next_cursor is not None:
+            log.debug("Fetching with cursor: %s", next_cursor)
+            result = tw.get_direct_messages(
+                count=args.batchsize,
+                cursor=next_cursor
             )
         else:
-            # Keeping a cache of both deleted and undeleted likes creates issues.
-            # Once old likes are deleted, we might never fetch new ones if we
-            # only look for likes older than the earliest like in the cache,
-            # so we need to exclude deleted likes when looking for old likes.
-            log.debug("There are %d likes, %d deleted", len(tweetcache), tweetcache.get_deleted_count())
-            # Get earliest like id that hasn't been deleted
-            min_id = tweetcache.get_min_id(undeleted=True, ignoreids=args.keeplist)
-            if known_min_id == min_id:
-                log.debug("Didn't find any new likes. All done.")
-                break
-            known_min_id = min_id
+            # First time fetch format
+            result = tw.get_direct_messages(count=args.batchsize)
 
-            log.debug("Fetching %d likes before tweet id: %s ...", args.batchsize, known_min_id - 1)
-            likes = tw.get_favorites(screen_name=username,
-                                    count=args.batchsize,
-                                    max_id=known_min_id - 1,
-                                    include_entities=False,
-                                    )
-        log.debug("Fetched %d likes.", len(likes))
-        if likes == []:
-            log.debug("No more old likes to fetch.")
+        if 'next_cursor' not in result:
+            log.debug("No more recent dms to fetch.")
             # Stop fetching
             fetching = False
-            break
         else:
-            tweetcache.save_likes(username, likes)
+            next_cursor = result['next_cursor']
+            log.debug("Found cursor for next time: %s", next_cursor)
+            
+        # Parse the DM event format
+        dms = []
+        for dm in result:
+            if dm.type in [ u'message_create',]:
+                # Returned created_timestamp is a unix seconds since epoch
+                # format or something, so we need to convert it
+                dm = {
+                    'id': dm.id,
+                    'createdAt': str(arrow.get(int(dm.created_timestamp) / 1000.0)),
+                    'senderId': dm.message_create['sender_id'],
+                    'recipientId': dm.message_create['target']['recipient_id'],
+                    'text': dm.message_create['message_data']['text'],
+                }
+                dms.append(dm)
 
-        sleeptime = 60 / args.searchlimit
-        log.debug("sleeping for %s seconds...", sleeptime)
-        time.sleep(sleeptime)
+        log.debug("Fetched %d dms.", len(dms))
+
+        tweetcache.save_dms(username, dms)
+
+        if (fetching):
+            # API limit is 15 per 15 minute window
+            sleeptime = 15 * 60 / 15
+            log.debug("sleeping for %s seconds...", sleeptime)
+            time.sleep(sleeptime)
 
     return tweetcache
 
 def get_destroy_set(args):
-    """ Find the set of likes to destroy
+    """ Find the set of dms to destroy
     """
-    # Priority order for the way we find likes to delete
+    # Priority order for the way we find dms to delete
     #   (if more than one is specified) is:
     # 1. Missing created_at mode
     # 2. Date based mode (--date-before and --date-after)
     # 3. Days before based mode
-    # 4. Number of likes to keep mode
+    # 4. Number of dms to keep mode
     if args.delete_nodate:
         log.debug("Using NULL created_at mode.")
         destroyset = tweetcache.get_destroy_nodate(args.deletemax)
@@ -449,47 +405,56 @@ def get_destroy_set(args):
 
     return destroyset
 
-def destroy_likes(tw, args, tweetcache):
-    """Destroy likes based on method chosen in args"""
+def destroy_dms(tw, args, tweetcache):
+    """Destroy dms based on method chosen in args"""
 
-    # Delete likes older than the number we're going to keep
+    # Delete dms older than the number we're going to keep
     destroyset = get_destroy_set(args)
 
-    log.debug("Need to destroy %d likes.", len(destroyset))
+    log.debug("Need to destroy %d dms.", len(destroyset))
+
+    # What is my userid?
+    user_info = tw.get_user(screen_name=args.userids[0])
+    userid = user_info.id
 
     for idx, item in enumerate(destroyset):
-        log.debug("Destroying like id %s: %s", item['id'], item['content_text'])
+        log.debug("Destroying %s dm [%s to %s] id %s: %s", userid, item['sender_id'], item['recipient_id'], item['id'], item['content_text'])
         try:
-
-            # Don't delete certain specific likes
+            # Don't delete certain specific dms
             if args.keeplist is not None and item['id'] in args.keeplist:
-                log.debug("Not deleting like: %s", item['id'])
+                log.debug("Not deleting DM: %d", item['id'])
+                continue
+
+            if item['sender_id'] != userid:
+                log.debug("Sender isn't me, so I can't actually delete this.")
+                if not args.dryrun:
+                    tweetcache.mark_deleted(item['id'])
                 continue
 
             if not args.dryrun:
-                gone_item = tw.destroy_favorite(item['id'])
+                tw.delete_direct_message(item['id'])
                 tweetcache.mark_deleted(item['id'])
             else:
-                # Try fetching the item we would delete
-                log.debug("Like not actually deleted.")
+                log.debug("DM not actually deleted.")
 
         except tweepy.errors.HTTPException as e:
-            log.debug("Response: %s", e.response_data)
+            log.debug("Response: %s", e.response)
+
             errors = e.api_codes
             log.debug("errors: %s", errors)
             if len(errors) == 1:
                 if errors[0] == 144:
-                    log.warn("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
+                    log.warn("DM with this id doesn't exist. Possibly stale cache entry. Removing.")
                     tweetcache.mark_deleted(item['id'])
                 
                 elif errors[0] == 179:
-                    log.warn("Not authorised to delete like: [%s] %s", item['id'], item['content_text'])
+                    log.warn("Not authorised to delete DM: [%s] %s", item['id'], item['content_text'])
                     log.info("Probably a tweet that got deleted by original author. Stale cache entry. Removing.")
                     tweetcache.mark_deleted(item['id'])
 
                 elif errors[0] == 34:
                     log.warn("Page doesn't exist for: [%s] %s", item['id'], item['content_text'])
-                    log.info("Probably a tweet that got deleted by original author. Stale cache entry. Removing.")
+                    log.info("Probably a DM that got deleted by original author. Stale cache entry. Removing.")
                     tweetcache.mark_deleted(item['id'])
 
                 elif errors[0] == 63:
@@ -511,9 +476,9 @@ def destroy_likes(tw, args, tweetcache):
     return tweetcache
 
 def import_twitter_archive(tw, args, tweetcache):
-    """Load likes into tweetcache from an archive downloaded from Twitter"""
+    """Load dms into tweetcache from an archive downloaded from Twitter"""
 
-    # Load likes from the likes JSON file in the archive
+    # Load dms from the dms JSON file in the archive
     log.info("Importing twitter archive from %s", args.importfile)
 
     # Open the archive zipfile
@@ -521,43 +486,53 @@ def import_twitter_archive(tw, args, tweetcache):
 
         # The datafile provided is a Javascript variable assignment
         # of a JSON datastructure, which is a little frustrating to parse
-        with ark.open(LIKES_DATAFILE, 'r') as twdf:
-            log.debug("Importing likes from archive...")
+        with ark.open(DMS_DATAFILE, 'r') as twdf:
+            log.debug("Importing dms from archive...")
             jsdata = twdf.readlines()
             # Edit the first line to strip out the variable assignment
             jsdata[0] = jsdata[0][ jsdata[0].index('['): ]
-            likeset = [ x['like'] for x in json.loads(''.join(jsdata)) ]
+            # The data is a list of 'conversations', each containing
+            # a list of messages, which are the DMs we need
+            for conversation in json.loads(''.join(jsdata)):
+                conv = conversation['dmConversation']
+                conv_id = conv['conversationId']
+                dmset = [ x['messageCreate'] for x in conv['messages'] ]
+                #pprint.pprint(dmset)
 
-            # Likes from the archive don't have a created_at attribute,
-            # so we need to fetch it from twitter.
-            decorate_with_tweetdate(tw, args, tweetcache, likeset)
+                # Decorate every DM item with the conversation ID
+                # This essentially de-normalises the data ready for storing
+                # it in a single table in the tweetcache
+                map(lambda x: x.update({'conversationId': conv_id}), dmset)
+
+                # Augment the tweetcache with this data
+                tweetcache.save_dms(args.userids[0], dmset)
 
     return tweetcache
 
-def decorate_with_tweetdate(tw, args, tweetcache, likeset):
-    """Take a set of likes and decorate them with the created_at attribute"""
+def decorate_with_tweetdate(tw, args, tweetcache, dmset):
+    """Take a set of dms and decorate them with the created_at attribute"""
     # The archive Twitter provides doesn't contain the created_at
-    # time for the likes that have been liked, and we want it for
-    # limiting what we delete, so we will go fetch it for these imported likes.
-    log.info("Decorating likes with created time for %d likes...", len(likeset))
+    # time for the dms that have been dmd, and we want it for
+    # limiting what we delete, so we will go fetch it for these imported dms.
+    log.info("Decorating dms with created time for %d dms...", len(dmset))
 
     # API limit is 300 calls per 15 minute window, for apps
     # User limit is 900 calls per 15 minute window
     sleeptime = 15 * 60 / 900
 
     # Fetch in batches of 100, which is API maximum we're allowed
-    for likebatch in chunked(likeset, 100):
-        log.debug("Fetching data for batch of %d...", len(likebatch))
-        likedict = {x['tweetId']: x for x in likebatch}
+    for dmbatch in chunked(dmset, 100):
+        log.debug("Fetching data for batch of %d...", len(dmbatch))
+        dmdict = {x['tweetId']: x for x in dmbatch}
 
-        tweet_ids = ','.join([x['tweetId'] for x in likebatch])
-        result = tw.lookup_statuses(tweet_ids)
+        tweet_ids = ','.join([x['tweetId'] for x in dmbatch])
+        result = tw.statuses.lookup(_id=tweet_ids)
 
         for res in result:
-            likedict[res['id_str']]['created_at'] = res['created_at']
+            dmdict[res['id_str']]['created_at'] = res['created_at']
 
         # Augment the tweetcache with this data
-        tweetcache.save_likes(args.userids[0], likedict.values())
+        tweetcache.save_dms(args.userids[0], dmdict.values())
 
         # Don't breach API rate-limit
         log.debug("sleeping for %s seconds...", sleeptime)
@@ -565,14 +540,14 @@ def decorate_with_tweetdate(tw, args, tweetcache, likeset):
 
     log.debug("Completed data fetching.")
 
-    return likedict.values()
+    return dmdict.values()
 
 def augment_args(args):
     """Augment commandline arguments with config file parameters"""
     cp = configparser.ConfigParser()
     cp.read(os.path.expanduser(args.config))
     try:
-        keeplist = cp.get('twitter', 'keeplikes')
+        keeplist = cp.get('twitter', 'keepdms')
         keeplist = [int(x) for x in keeplist.split()]
         log.debug('keeplist: %s', keeplist)
 
@@ -583,7 +558,7 @@ def augment_args(args):
         log.debug('args: %s', args.keeplist)
 
     except configparser.NoOptionError:
-        log.debug("No such option.")
+        log.debug("No such option '[twitter] keepdms'")
         pass
 
     return args
@@ -621,30 +596,30 @@ def valid_date(s):
 
 if __name__ == '__main__':
 
-    ap = argparse.ArgumentParser(description="Delete old likes",
+    ap = argparse.ArgumentParser(description="Delete old dms",
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument('userids', nargs='+', help="User id")
 
     ap.add_argument('-c', '--config', default='~/.twitrc', help="Config file")
-    ap.add_argument('-b', '--batchsize', type=int, default=200, help="Fetch this many likes per API call (max is Twitter API max, currently 200)")
-    ap.add_argument('-d', '--deletemax', type=int, help="Only delete this many likes.")
-    ap.add_argument('-k', '--keeplist', type=int, nargs='+', help="Don't delete likes in this list.")
+    ap.add_argument('-b', '--batchsize', type=int, default=40, help="Fetch this many dms per API call (max is Twitter API max, currently 200)")
+    ap.add_argument('-d', '--deletemax', type=int, help="Only delete this many dms.")
+    ap.add_argument('-k', '--keeplist', type=int, nargs='+', help="Don't delete dms in this list.")
 
-    ap.add_argument('-B', '--date-before', help="Delete likes before this date.", type=valid_date)
-    ap.add_argument('-A', '--date-after', help="Delete likes after this date.", type=valid_date)
-    ap.add_argument('-K', '--keepnum', type=int, default=500, help="How many likes to keep.")
-    ap.add_argument('--delete-nodate', action='store_true', help="Delete likes with NULL created_at datetime.")
+    ap.add_argument('-B', '--date-before', help="Delete dms before this date.", type=valid_date)
+    ap.add_argument('-A', '--date-after', help="Delete dms after this date.", type=valid_date)
+    ap.add_argument('-K', '--keepnum', type=int, default=500, help="How many dms to keep.")
+    ap.add_argument('--delete-nodate', action='store_true', help="Delete dms with NULL created_at datetime.")
 
-    ap.add_argument('--beforedays', type=int, help="Delete likes from before this many days ago.")
+    ap.add_argument('--beforedays', type=int, help="Delete dms from before this many days ago.")
 
-    ap.add_argument('-i', '--importfile', default=None, help="Import likes from Twitter archive.")
+    ap.add_argument('-i', '--importfile', default=None, help="Import dms from Twitter archive.")
 
     ap.add_argument('--tweetcache', default='~/.tweetcache.db', help="File to store cache of tweet/date IDs")
 
     ap.add_argument('--nodelete', action='store_true', help="Skip the delete stage.")
     ap.add_argument('--nofetch', action='store_true', help="Skip the fetch stage.")
 
-    ap.add_argument('--dryrun', action='store_true', help="Don't actually delete likes, but do populate cache.")
+    ap.add_argument('--dryrun', action='store_true', help="Don't actually delete dms, but do populate cache.")
     ap.add_argument('--loglevel', choices=['debug', 'info', 'warning', 'error', 'critical'], help="Set log output level.")
 
     ap.add_argument('--searchlimit', type=int, default=5, help="Max number of searches per minute.")
@@ -659,7 +634,7 @@ if __name__ == '__main__':
         log.setLevel(getattr(logging, levelname))
 
     # Safety feature: If you specific --after-date, force to also
-    # provide --before-date to prevent accidental deletion of all likes.
+    # provide --before-date to prevent accidental deletion of all dms.
     if args.date_after is not None:
         if args.date_before is None:
             ap.error("Safety feature: Need to provide --date-before as well as --date-after.")
@@ -676,20 +651,20 @@ if __name__ == '__main__':
     tw = authenticate(args)
 
     if args.importfile:
-        # Import likes from a Twitter archive file you asked for
+        # Import dms from a Twitter archive file you asked for
         # This reads in the data Twitter sends you when you ask
-        # for an archive of your likes, and stores it in the local tweetcache.
+        # for an archive of your dms, and stores it in the local tweetcache.
         # This is a handy way to bootstrap your archive rather than using the
         # slow and painful feed traversal mechanism.
         tweetcache = import_twitter_archive(tw, args, tweetcache)
 
     if not args.nofetch:
-        tweetcache = fetch_all_likes(tw, args, tweetcache)
+        tweetcache = fetch_all_dms(tw, args, tweetcache)
 
     if tweetcache is None:
-        raise ValueError("Unable to load any likes for this user.")
+        raise ValueError("Unable to load any dms for this user.")
 
     if not args.nodelete:
-        tweetcache = destroy_likes(tw, args, tweetcache)
+        tweetcache = destroy_dms(tw, args, tweetcache)
 
     log.debug("Done.")
