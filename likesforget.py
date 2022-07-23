@@ -474,7 +474,6 @@ def destroy_likes(tw, args, tweetcache):
                 log.debug("Like not actually deleted.")
 
         except tweepy.errors.HTTPException as e:
-            log.debug("Response: %s", e.response_data)
             errors = e.api_codes
             log.debug("errors: %s", errors)
             if len(errors) == 1:
