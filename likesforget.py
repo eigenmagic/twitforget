@@ -478,21 +478,21 @@ def destroy_likes(tw, args, tweetcache):
             log.debug("errors: %s", errors)
             if len(errors) == 1:
                 if errors[0] == 144:
-                    log.warn("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
+                    log.warning("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
                     tweetcache.mark_deleted(item['id'])
                 
                 elif errors[0] == 179:
-                    log.warn("Not authorised to delete like: [%s] %s", item['id'], item['content_text'])
+                    log.warning("Not authorised to delete like: [%s] %s", item['id'], item['content_text'])
                     log.info("Probably a tweet that got deleted by original author. Stale cache entry. Removing.")
                     tweetcache.mark_deleted(item['id'])
 
                 elif errors[0] == 34:
-                    log.warn("Page doesn't exist for: [%s] %s", item['id'], item['content_text'])
+                    log.warning("Page doesn't exist for: [%s] %s", item['id'], item['content_text'])
                     log.info("Probably a tweet that got deleted by original author. Stale cache entry. Removing.")
                     tweetcache.mark_deleted(item['id'])
 
                 elif errors[0] == 63:
-                    log.warn("User you retweeted got suspended. Removing cache entry.")
+                    log.warning("User you retweeted got suspended. Removing cache entry.")
                     tweetcache.mark_deleted(item['id'])
 
                 else:

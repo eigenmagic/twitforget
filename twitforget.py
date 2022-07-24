@@ -456,21 +456,21 @@ def destroy_tweets(tw, args, tweetcache):
             log.debug("errors: %s", errors)
             if len(errors) == 1:
                 if errors[0] == 144:
-                    log.warn("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
+                    log.warning("Tweet with this id doesn't exist. Possibly stale cache entry. Removing.")
                     tweetcache.mark_deleted(twt['id'])
                 
                 elif errors[0] == 179:
-                    log.warn("Not authorised to delete tweet: [%s] %s", twt['id'], twt['content_text'])
+                    log.warning("Not authorised to delete tweet: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
                     tweetcache.mark_deleted(twt['id'])
 
                 elif errors[0] == 34:
-                    log.warn("Page doesn't exist for: [%s] %s", twt['id'], twt['content_text'])
+                    log.warning("Page doesn't exist for: [%s] %s", twt['id'], twt['content_text'])
                     log.info("Probably a RT that got deleted by original author. Stale cache entry. Removing.")
                     tweetcache.mark_deleted(twt['id'])
 
                 elif errors[0] == 63:
-                    log.warn("User you retweeted got suspended. Removing cache entry.")
+                    log.warning("User you retweeted got suspended. Removing cache entry.")
                     tweetcache.mark_deleted(twt['id'])
 
                 else:
